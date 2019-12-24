@@ -29,14 +29,49 @@ function trieFind(input, trie, init)
 	return i, j-1, input:sub(i,j-1)
 end
 
-function longLiteralString(input, terminator, init)
-	--Consume long literal string, return i, j, token (string contents)
-
-	--For now, just find the terminator
-	local i, j = input:find(terminator, init + #terminator, true)
-	if i then
-		return init, j, input:sub(init, j)
+--Matches any kind of end-of-line sequence (carriage return, newline, carriage return followed by newline, or newline followed by carriage return) 
+function longLiteralEOL(input, init)
+	--TODO
+	local char = input:sub(init, init)
+	local nextchar = input:sub(init+1, init+1) --TODO: Handle error case where this walks off the end of the file?
+	if char == '\n' or char == '\r' then
+		if nextchar ~= char and (nextchar == '\n' or nextchar == '\r') then
+			return init, init + 2
+		end
+		return init, init + 1
 	end
+	return nil
+end
+
+function longLiteralString(input, terminator, init)
+	--Consume long literal string, return i, j, token (string contents).
+
+	local tokens = {}
+	local input_i = init + #terminator
+	local i, j = longLiteralEOL(input, input_i)
+	if i then
+		input_i = j + 1 --Skip a newline if it occurs right after the opening long bracket.
+	end
+	while input_i <= #input do
+		local token
+		i, j = longLiteralEOL(input, input_i)
+		if i then
+			token = '\n' --Convert all EOLs into a single newline
+		else
+			i, j = input:find(terminator, input_i, true) --Check if we're at the end of the string
+			if i then
+				input_i = j
+				table.insert(tokens, terminator)
+				return init, j, table.concat(tokens)
+			else
+				token = input:sub(input_i, input_i)
+			end
+		end
+		table.insert(tokens, token)
+		input_i = (j or input_i) + 1
+	end
+
+	printParserDebug(input, input_i, lines, "Error: Unterminated long string.", true)
 	return nil
 end
 
@@ -76,7 +111,7 @@ function shortLiteralString(input, terminator, init)
 					printParserDebug(input, input_i, lines, "Error: Invalid hexidecimal byte literal.", true)
 				end
 			elseif input:match('^[0-9]', input_i + 1) then
-				i, j, dec = input:find('^[0-9][0-9][0-9]', input_i + 1)
+				local i, j, dec = input:find('^[0-9][0-9][0-9]', input_i + 1)
 				if i then
 					token = string.char(tonumber(dec, 10))
 					input_i = input_i + 3
@@ -84,7 +119,7 @@ function shortLiteralString(input, terminator, init)
 					printParserDebug(input, input_i, lines, "Error: Invalid decimal byte literal.", true)
 				end
 			elseif nextchar == 'u' then
-				i, j, hex = input:find('^{([0-9a-fA-F]+)}', input_i + 1)
+				local i, j, hex = input:find('^{([0-9a-fA-F]+)}', input_i + 1)
 				if i then
 					token = utf8.char(tonumber(hex, 16))
 					input_i = input_i + 2 + #hex
@@ -115,7 +150,7 @@ function printParserDebug(input, input_i, lines, message, isError)
 	if verboseMode or isError then
 		for i,v in ipairs(lines) do
 			if input_i >= v[1] and input_i <= v[2] then
-				print(input:sub(v[1], v[2]):gsub('\t', ' ') .. string.rep(' ', input_i - v[1]) .. "^--" .. message .. '\n')
+				print(input:sub(v[1], v[2]):gsub('\t', ' '):gsub('\n', '') .. '\n' .. string.rep(' ', input_i - v[1]) .. "^--" .. message .. '\n')
 				break
 			end
 		end
@@ -182,9 +217,12 @@ function tokenize(input)
 						i, j, token = trieFind(input, operators_trie, input_i)
 						if not i then
 							--TODO: Properly interpret all literal types
-							i, j, token = input:find('^([0-9]+%(.[0-9]+)?)') --Check for numeric constants, hexidecimal constants
+							i, j, token = input:find('^(%d*%.?%d+)', input_i) --Check for numeric constants
 							if not i then
-								printParserDebug(input, input_i, lines, "Error: Didn't expect this here.", true)
+								i, j, token = input:find('^(0[xX]%x+(%.%x+)?([pP][+-]?%x+)?)', input_i) --Check for hexidecimal constants
+								if not i then
+									printParserDebug(input, input_i, lines, "Error: Didn't expect this here.", true)
+								end
 							end
 						end
 					end
