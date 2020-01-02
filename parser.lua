@@ -1,52 +1,15 @@
---Iterator for symbol stream
-
-SymbolIterator = {}
-SymbolIteratorMeta = {}
---TODO add a weak table to deduplicate iterators
-SymbolIteratorInstanceMeta = {__index = SymbolIterator}
-setmetatable(SymbolIterator, SymbolIteratorMeta)
-
-function SymbolIterator:new(tokens, i)
-	local it = {tokens = tokens, i = i or 1}
-	setmetatable(it, SymbolIteratorInstanceMeta)
-	return it
-end
-
-function SymbolIterator:copy()
-	local it = SymbolIterator.new(self.tokens)
-	it.i = self.i
-	return it
-end
-
-function SymbolIterator:next()
-	self.i = self.i + 1
-	self.symbol = self.tokens[self.i]
-end
-
-function SymbolIterator:symbol()
-	return it.tokens[it.i]
-end
-
-function SymbolIteratorInstanceMeta.__add(a, b)
-	local it, incr
-	if type(b) == 'number' then
-		it, incr = a, b
-	else
-		it, incr = b, a
-	end
-
-	newit = it:copy()
-	for i = 1, incr do
-		it = it:next()
-	end
-end
-
---Parser
-
 Parser = {}
-function Parser.empty(j)
+function Parser.symbol(t,i)
+	return t[i]
+end
+
+function Parser.callNonRecursively(fn,t,i)
+	--TODO: Check some condition, call fn with t and i as args.
+end
+
+function Parser.empty(t,i)
 	-- print(debug.traceback())
-	return {j}
+	return {i}
 end
 
 function Parser.opt(fn)
@@ -56,9 +19,9 @@ end
 
 function Parser.term(x)
 	-- print(debug.traceback())
-	return function(j)
-		if j.symbol == x then
-			return {j + 1}
+	return function(t,i)
+		if Parser.symbol(t,i) == x then
+			return {i + 1}
 		end
 		--TODO add error checking
 		return {}
@@ -71,18 +34,18 @@ function Parser.union(sets)
 	local resultExists = {}
 	for _,set in ipairs(sets) do
 		for _,v in ipairs(set) do
-			resultExists[v.i] = v
+			resultExists[v] = true
 		end
 	end
 	for k,v in pairs(resultExists) do
-		table.insert(results, v)
+		table.insert(results, k)
 	end
 	return results
 end
 
 function Parser.kleeneStar(fn)
 	-- print(debug.traceback())
-	return function(j)
+	return function(t,i)
 		if type(fn) == 'string' then
 			fn = Parser.term(fn)
 		end
@@ -90,10 +53,10 @@ function Parser.kleeneStar(fn)
 		while true do
 			local tmpResults = {}
 			for i,v in ipairs(results) do
-				table.insert(tmpResults, fn(j))
+				table.insert(tmpResults, Parser.callNonRecursively(fn,t,i))
 			end
 			tmpResults = Parser.union(tmpResults)
-			if #tmpResults == 1 and tmpResults[1].i == j.i then
+			if #tmpResults == 1 and tmpResults[1] == i then
 				break
 			end
 			results = tmpResults
@@ -105,16 +68,13 @@ function Parser.alt(...)
 	-- print(debug.traceback())
 	--TODO possible table.sort here
 	local fns = {...}
-	return function(j)
+	return function(t,i)
 		local results = {}
 		for k,v in ipairs(fns) do
 			if type(v) == 'string' then
 				v = Parser.term(v)
 			end
-			local result = v(j)
-			if #result == 1 and result[1].i ~= j.i then return result end --Return the first result
-			--TODO if the above works, clean up dead code here
-			table.insert(results, v(j))
+			table.insert(results, Parser.callNonRecursively(v,t,i))
 		end
 		return Parser.union(results)
 	end
@@ -123,15 +83,15 @@ end
 function Parser.seq(...)
 	-- print(debug.traceback())
 	local fns = {...}
-	return function(j)
-		local result = {j}
+	return function(t,i)
+		local result = {i}
 		for _,fn in ipairs(fns) do
 			if type(fn) == 'string' then
 				fn = Parser.term(fn)
 			end
 			local tmpResult = {}
 			for _,v in ipairs(result) do
-				table.insert(tmpResult, fn(v))
+				table.insert(tmpResult, Parser.callNonRecursively(fn,v))
 			end
 			result = Parser.union(tmpResult)
 		end
@@ -143,9 +103,9 @@ end
 -- Implementing the Lua parser
 local P = Parser
 
-function chunk(j) return block(j) end
-function block(j) return P.seq(P.kleeneStar(stat), P.opt(retstat))(j) end
-function stat(j) return P.alt(
+local function chunk(t,i) return block(t,i) end
+local function block(t,i) return P.seq(P.kleeneStar(stat), P.opt(retstat))(t,i) end
+local function stat(t,i) return P.alt(
 		';',
 		P.seq(varlist, '=', explist),
 		functioncall,
@@ -159,29 +119,29 @@ function stat(j) return P.alt(
 		P.seq('for', namelist, 'in', explist, 'do', block, 'end'),
 		P.seq('function', funcname, funcbody),
 		P.seq('local', 'function', Name, funcbody),
-		P.seq('local', namelist, P.opt(P.seq('=', explist))))(j) end
+		P.seq('local', namelist, P.opt(P.seq('=', explist))))(t,i) end
 
-function retstat(j) return P.seq('return', P.opt(explist), P.opt(';'))(j) end
-function label(j) return P.seq('::', Name, '::')(j) end
-function funcname(j) return P.seq(Name, P.kleeneStar(P.seq('.', Name)), P.opt(P.seq(':', Name)))(j) end
-function varlist(j) return P.seq(var, P.kleeneStar(P.seq(',', var)))(j) end
-function var(j) return P.alt(Name, P.seq(prefixexp, '[', exp, ']'), P.seq(prefixexp, '.', Name))(j) end
-function namelist(j) return P.seq(Name, P.kleeneStar(P.seq(',', Name)))(j) end
-function explist(j) return P.seq(exp, P.kleeneStar(P.seq(',', exp)))(j) end
-function exp(j) return P.alt('nil', 'false', 'true', Numeral, LiteralString, '...' , functiondef,
-	 prefixexp, tableconstructor, P.seq(exp, binop, exp), P.seq(uno, exp))(j) end --Need to do something about this left recursion
-function prefixexp(j) P.alt(var, functioncall, P.seq('(', exp, ')'))(j) end
-function functioncall(j) P.alt(P.seq(prefixexp, args), P.seq(prefixexp, ':', Name, args))(j) end
-function args(j) P.alt(P.seq('(', P.opt(explist), ')'), tableconstructor, LiteralString)(j) end
-function functiondef(j) P.seq(functionterm, funcbody)(j) end
-function funcbody(j) P.seq('(', P.opt(parlist), ')', block, 'end')(j) end
-function parlist(j) P.alt(P.seq(namelist, P.opt(',', '...')), '...')(j) end
-function tableconstructor(j) P.seq('{', P.opt(fieldlist), '}')(j) end
-function fieldlist(j) P.seq(field, P.kleeneStar(P.seq(fieldsep, field)), P.opt(fieldsep))(j) end
-function field(j) P.alt(P.seq('[', exp, ']', '=', exp), P.seq(Name, '=', exp), exp)(j) end
-function fieldsep(j) P.alt(',', ';')(j) end
-function binop(j) P.alt('+', '-', '*', '/', '//', '^', '%',
+local function retstat(t,i) return P.seq('return', P.opt(explist), P.opt(';'))(t,i) end
+local function label(t,i) return P.seq('::', Name, '::')(t,i) end
+local function funcname(t,i) return P.seq(Name, P.kleeneStar(P.seq('.', Name)), P.opt(P.seq(':', Name)))(t,i) end
+local function varlist(t,i) return P.seq(var, P.kleeneStar(P.seq(',', var)))(t,i) end
+local function var(t,i) return P.alt(Name, P.seq(prefixexp, '[', exp, ']'), P.seq(prefixexp, '.', Name))(t,i) end
+local function namelist(t,i) return P.seq(Name, P.kleeneStar(P.seq(',', Name)))(t,i) end
+local function explist(t,i) return P.seq(exp, P.kleeneStar(P.seq(',', exp)))(t,i) end
+local function exp(t,i) return P.alt('nil', 'false', 'true', Numeral, LiteralString, '...' , functiondef,
+	 prefixexp, tableconstructor, P.seq(exp, binop, exp), P.seq(uno, exp))(t,i) end --Need to do something about this left recursion
+local function prefixexp(t,i) P.alt(var, functioncall, P.seq('(', exp, ')'))(t,i) end
+local function functioncall(t,i) P.alt(P.seq(prefixexp, args), P.seq(prefixexp, ':', Name, args))(t,i) end
+local function args(t,i) P.alt(P.seq('(', P.opt(explist), ')'), tableconstructor, LiteralString)(t,i) end
+local function functiondef(t,i) P.seq(functionterm, funcbody)(t,i) end
+local function funcbody(t,i) P.seq('(', P.opt(parlist), ')', block, 'end')(t,i) end
+local function parlist(t,i) P.alt(P.seq(namelist, P.opt(',', '...')), '...')(t,i) end
+local function tableconstructor(t,i) P.seq('{', P.opt(fieldlist), '}')(t,i) end
+local function fieldlist(t,i) P.seq(field, P.kleeneStar(P.seq(fieldsep, field)), P.opt(fieldsep))(t,i) end
+local function field(t,i) P.alt(P.seq('[', exp, ']', '=', exp), P.seq(Name, '=', exp), exp)(t,i) end
+local function fieldsep(t,i) P.alt(',', ';')(t,i) end
+local function binop(t,i) P.alt('+', '-', '*', '/', '//', '^', '%',
 	 '&', '~', '|', '>>', '<<', '..', 
 	 '<', '<=', '>', '>=', '==', '~=', 
-	 'and', 'or')(j) end
-function unop(j) P.alt('-', 'not', '#', '~')(j) end
+	 'and', 'or')(t,i) end
+local function unop(t,i) P.alt('-', 'not', '#', '~')(t,i) end

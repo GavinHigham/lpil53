@@ -5,8 +5,9 @@ local operators = {
 	'=','+','-','*','/','^','#','&','~','|'
 }
 
---With Lua's current set of operators, the path to every node represents a valid operator
-operators_trie = {}
+--With Lua's current set of operators, the path to every trie node represents a valid operator
+--This is because every prefix of any multi-character operator is also an operator
+local operators_trie = {}
 for i,op in ipairs(operators) do
 	local root = operators_trie
 	for i=1,#op do
@@ -16,7 +17,7 @@ for i,op in ipairs(operators) do
 	end
 end
 
-function trieFind(input, trie, init)
+local function trieFind(input, trie, init)
 	local i = init or 1
 	local j = i - 1
 	while trie do
@@ -29,8 +30,12 @@ function trieFind(input, trie, init)
 	return i, j-1, input:sub(i,j-1)
 end
 
+local function name(input, init)
+	return input:find('^([%a_][%w_]*)', init)
+end
+
 --Matches any kind of end-of-line sequence (carriage return, newline, carriage return followed by newline, or newline followed by carriage return) 
-function longLiteralEOL(input, init)
+local function longLiteralEOL(input, init)
 	--TODO
 	local char = input:sub(init, init)
 	local nextchar = input:sub(init+1, init+1) --TODO: Handle error case where this walks off the end of the file?
@@ -43,7 +48,7 @@ function longLiteralEOL(input, init)
 	return nil
 end
 
-function longLiteralString(input, terminator, init)
+local function longStringLiteral(input, terminator, init)
 	--Consume long literal string, return i, j, token (string contents).
 
 	local tokens = {}
@@ -75,7 +80,7 @@ function longLiteralString(input, terminator, init)
 	return nil
 end
 
-function shortLiteralString(input, terminator, init)
+local function shortStringLiteral(input, terminator, init)
 	--Consume short literal string, return i, j, token (string contents).
 	local tokens = {terminator}
 	local input_i = init + 1
@@ -146,7 +151,62 @@ function shortLiteralString(input, terminator, init)
 	return nil
 end
 
-function printParserDebug(input, input_i, lines, message, isError)
+local function stringLiteral(input, init)
+	local i, j, equals = input:find('^%[(=*)%[', init)
+	if i then
+		return longStringLiteral(input, ']' .. equals .. ']', init)
+	elseif input:sub(init, init) == "'" then
+		return shortStringLiteral(input, "'", init)
+	elseif input:sub(init, init) == '"' then
+		return shortStringLiteral(input, '"', init)
+	end
+	return nil
+end
+
+local function whitespace(input, init)
+	return input:find('^%s+', init)
+end
+
+local function comment(input, init)
+	if input:sub(init, init + 1) == '--' then
+		--Confirmed to be a comment, now check for long comment
+		printParserDebug(input, init, lines, "checking if it's a long comment")
+		i, j, equals = input:find('^%[(=*)%[', init + 2)
+		if i then
+			local terminator = ']' .. equals .. ']'
+			printParserDebug(input, init, lines, 'this is a long comment, finding the terminating "' .. terminator .. '"')
+			i, j = input:find(terminator, j + 1, true)
+			if not i then
+				printParserDebug(input, init, lines, 'Error: Unterminated long comment', true)
+				--Error case, no termination to comment
+				--TODO: Handle error
+			end
+		else
+			printParserDebug(input, init, lines, 'this is a short comment, finding the terminating newline')
+			i, j = input:find('\n', init + 2)
+			j = j or #input --If this is a short comment on the last line, there may not be a terminating newline
+		end
+		return i, j --Comments don't return a token
+	end
+end
+
+local function operator(input, init)
+	return trieFind(input, operators_trie, init)
+end
+
+local function numericLiteral(input, init)
+	--TODO: Clean this up
+	local i, j, token = input:find('^(%d*%.?%d+)', init) --Check for numeric constants
+	if not i then
+		i, j, token = input:find('^(0[xX]%x+(%.%x+)?([pP][+-]?%x+)?)', init) --Check for hexidecimal constants
+		if not i then
+			printParserDebug(input, init, lines, "Error: Didn't expect this here.", true)
+		end
+	end
+	return i, j, token
+end
+
+local function printParserDebug(input, input_i, lines, message, isError)
 	if verboseMode or isError then
 		for i,v in ipairs(lines) do
 			if input_i >= v[1] and input_i <= v[2] then
@@ -170,67 +230,27 @@ function tokenize(input)
 	end
 
 	local tokens = {}
+	--Tokenizing function, token type, debug string
+	local tokenizers = {
+		{name,           'name',            'checking if this is a name'},
+		{whitespace,     'whitespace',      'checking if this is whitespace'},
+		{comment,        'comment',         'checking if this is a comment'},
+		{stringLiteral,  'string_literal',  'checking if this is a string'},
+		{operator,       'operator',        'checking if this is an operator'},
+		{numericLiteral, 'numeric_literal', 'checking if this is a numeric literal'}
+	}
 
 	local input_i=1
 	while input_i <= #input do
-		printParserDebug(input, input_i, lines, 'checking if this is a Name')
-		--Check for Names
-		local i, j, token = input:find('^([%a_][%w_]*)', input_i)
-		if not i then
-			printParserDebug(input, input_i, lines, 'checking if this is whitespace')
-			--Check for whitespace
-			i, j, token = input:find('^%s+', input_i)
-			if not i then
-				printParserDebug(input, input_i, lines, 'checking if this is a comment')
-				--Check for comment
-				if input:sub(input_i, input_i + 1) == '--' then
-					printParserDebug(input, input_i, lines, "checking if it's a long comment")
-					--Confirmed to be a comment, now check for long comment
-					i, j, equals = input:find('^%[(=*)%[', input_i + 2)
-					if i then
-						local terminator = ']' .. equals .. ']'
-						printParserDebug(input, input_i, lines, 'this is a long comment, finding the terminating "' .. terminator .. '"')
-						i, j = input:find(terminator, j + 1, true)
-						if not i then
-							printParserDebug(input, input_i, lines, 'Error: Unterminated long comment', true)
-							--Error case, no termination to comment
-							--TODO: Handle error
-						end
-					else
-						printParserDebug(input, input_i, lines, 'this is a short comment, finding the terminating newline')
-						i, j, token = input:find('\n', input_i + 2)
-						j = j or #input
-					end
-				else
-					printParserDebug(input, input_i, lines, 'checking if this is a string')
-					--Check for ', " and [[ ([=[, etc.) strings, handle escapes and unicode and junk.
-					i, j, equals = input:find('^%[(=*)%[', input_i)
-					if i then
-						i, j, token = longLiteralString(input, ']' .. equals .. ']', input_i)
-					elseif input:sub(input_i, input_i) == "'" then
-						i, j, token = shortLiteralString(input, "'", input_i)
-					elseif input:sub(input_i, input_i) == '"' then
-						i, j, token = shortLiteralString(input, '"', input_i)
-					else
-						printParserDebug(input, input_i, lines, 'checking if this is an operator')
-						--Check for operators
-						i, j, token = trieFind(input, operators_trie, input_i)
-						if not i then
-							--TODO: Properly interpret all literal types
-							i, j, token = input:find('^(%d*%.?%d+)', input_i) --Check for numeric constants
-							if not i then
-								i, j, token = input:find('^(0[xX]%x+(%.%x+)?([pP][+-]?%x+)?)', input_i) --Check for hexidecimal constants
-								if not i then
-									printParserDebug(input, input_i, lines, "Error: Didn't expect this here.", true)
-								end
-							end
-						end
-					end
-				end
+		for _,v in ipairs(tokenizers) do
+			printParserDebug(input, input_i, lines, v[3])
+			local i, j, token = v[1](input, input_i)
+			if i then
+				table.insert(tokens, {token = token, type = v[2], i = i, j = j})
+				input_i = (j or input_i) + 1
+				break
 			end
 		end
-		table.insert(tokens, token)
-		input_i = (j or input_i) + 1
 	end
 
 	return tokens
