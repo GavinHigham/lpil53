@@ -1,3 +1,5 @@
+Lexer = {}
+
 local operators = {
 	'...','..','.','::',':',';',',',
 	'<<','>>','//','==','~=','<=','>=',
@@ -17,7 +19,7 @@ for i,op in ipairs(operators) do
 	end
 end
 
-local function trieFind(input, trie, init)
+function trieFind(input, trie, init)
 	local i = init or 1
 	local j = i - 1
 	while trie do
@@ -30,12 +32,12 @@ local function trieFind(input, trie, init)
 	return i, j-1, input:sub(i,j-1)
 end
 
-local function name(input, init)
+function name(input, init)
 	return input:find('^([%a_][%w_]*)', init)
 end
 
 --Matches any kind of end-of-line sequence (carriage return, newline, carriage return followed by newline, or newline followed by carriage return) 
-local function longLiteralEOL(input, init)
+function longLiteralEOL(input, init)
 	--TODO
 	local char = input:sub(init, init)
 	local nextchar = input:sub(init+1, init+1) --TODO: Handle error case where this walks off the end of the file?
@@ -48,7 +50,7 @@ local function longLiteralEOL(input, init)
 	return nil
 end
 
-local function longStringLiteral(input, terminator, init)
+function longStringLiteral(input, terminator, init)
 	--Consume long literal string, return i, j, token (string contents).
 
 	local tokens = {}
@@ -80,7 +82,7 @@ local function longStringLiteral(input, terminator, init)
 	return nil
 end
 
-local function shortStringLiteral(input, terminator, init)
+function shortStringLiteral(input, terminator, init)
 	--Consume short literal string, return i, j, token (string contents).
 	local tokens = {terminator}
 	local input_i = init + 1
@@ -151,7 +153,7 @@ local function shortStringLiteral(input, terminator, init)
 	return nil
 end
 
-local function stringLiteral(input, init)
+function stringLiteral(input, init)
 	local i, j, equals = input:find('^%[(=*)%[', init)
 	if i then
 		return longStringLiteral(input, ']' .. equals .. ']', init)
@@ -163,11 +165,11 @@ local function stringLiteral(input, init)
 	return nil
 end
 
-local function whitespace(input, init)
+function whitespace(input, init)
 	return input:find('^%s+', init)
 end
 
-local function comment(input, init)
+function comment(input, init)
 	if input:sub(init, init + 1) == '--' then
 		--Confirmed to be a comment, now check for long comment
 		printParserDebug(input, init, lines, "checking if it's a long comment")
@@ -190,11 +192,11 @@ local function comment(input, init)
 	end
 end
 
-local function operator(input, init)
+function operator(input, init)
 	return trieFind(input, operators_trie, init)
 end
 
-local function numericLiteral(input, init)
+function numericLiteral(input, init)
 	--TODO: Clean this up
 	local i, j, token = input:find('^(%d*%.?%d+)', init) --Check for numeric constants
 	if not i then
@@ -206,7 +208,7 @@ local function numericLiteral(input, init)
 	return i, j, token
 end
 
-local function printParserDebug(input, input_i, lines, message, isError)
+function printParserDebug(input, input_i, lines, message, isError)
 	if verboseMode or isError then
 		for i,v in ipairs(lines) do
 			if input_i >= v[1] and input_i <= v[2] then
@@ -217,7 +219,7 @@ local function printParserDebug(input, input_i, lines, message, isError)
 	end
 end
 
-function tokenize(input)
+function Lexer.tokenize(input)
 	lines = {}
 	do
 		local i, j = 1, 0
@@ -246,43 +248,17 @@ function tokenize(input)
 			printParserDebug(input, input_i, lines, v[3])
 			local i, j, token = v[1](input, input_i)
 			if i then
-				table.insert(tokens, {token = token, type = v[2], i = i, j = j})
-				input_i = (j or input_i) + 1
+				if token then --Don't insert whitespace
+					table.insert(tokens, {token = token, type = v[2], i = i, j = j})
+				end
+				input_i = j
 				break
 			end
 		end
+		input_i = input_i + 1
 	end
 
 	return tokens
 end
 
-examples = {
-[[
-function mysimplefn(x, y)
-	return x + y
-end
-]],
-[[
---This is a comment
-myvar = someothervar
-]],
-[===[
---Function that does a thing
-function coolThing(whoa_an_arg)
-	--[[ Then we do a long comment
-		it is broken
-		into lines
-	--This "nested" comment is fine
-	--[=[ this is ignored too ]=]
-	]]
-	frog = amphibian
-	--[==[ Whoa a cool long comment
-	several lines]==]
-	return love
-end
-]===],
-[[hello = 4]],
-[[\]],
-"'",
-"hello\nthere"
-}
+return Lexer
