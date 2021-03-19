@@ -1,22 +1,50 @@
 Lexer = {}
 
-local operators = {
-	'...','..','.','::',':',';',',',
-	'<<','>>','//','==','~=','<=','>=',
-	'(',')','{','}','[',']','<','>',
-	'=','+','-','*','/','^','#','&','~','|'
+local syntaxTokens = {
+	'::','...','(',')','{','}','[',']','.',':',';',',','=',
 }
 
---With Lua's current set of operators, the path to every trie node represents a valid operator
---This is because every prefix of any multi-character operator is also an operator
-local operators_trie = {}
-for i,op in ipairs(operators) do
-	local root = operators_trie
-	for i=1,#op do
-		local k = string.sub(op, i, i)
-		root[k] = root[k] or {}
-		root = root[k]
+local operators = {
+	'+','-','*','/','^','%',
+	'==','~=','<=','>=','<','>','<<','>>',
+	'#','&','~','|','..','//',
+}
+
+local keywords = {
+	'break','do','else','elseif','end','false','for','function','goto','if',
+	'in','local','nil','repeat','return','then','true','until','while'
+}
+
+local operatorWords = {
+	'not', 'or', 'and'
+}
+
+function makeTrie(words)
+	local trie = {}
+	for i,word in ipairs(words) do
+		local root = trie
+		for i=1,#word do
+			local k = string.sub(word, i, i)
+			root[k] = root[k] or {}
+			root = root[k]
+		end
 	end
+	return trie
+end
+
+--With Lua's current set of operators, the path to every trie node represents a valid operator
+local syntax_trie = makeTrie(syntaxTokens)
+--Same with non-operator syntax
+local operators_trie = makeTrie(operators)
+
+for i,v in ipairs(keywords) do
+	keywords[v] = true
+	keywords[i] = nil
+end
+
+for i,v in ipairs(operatorWords) do
+	operatorWords[v] = true
+	operatorWords[i] = nil
 end
 
 function trieFind(input, trie, init)
@@ -192,6 +220,10 @@ function comment(input, init)
 	end
 end
 
+function syntax(input, init)
+	return trieFind(input, syntax_trie, init)
+end
+
 function operator(input, init)
 	return trieFind(input, operators_trie, init)
 end
@@ -238,6 +270,7 @@ function Lexer.tokenize(input)
 		{whitespace,     'whitespace',      'checking if this is whitespace'},
 		{comment,        'comment',         'checking if this is a comment'},
 		{stringLiteral,  'string_literal',  'checking if this is a string'},
+		{syntax,         'syntax',          'checking if this is syntax'},
 		{operator,       'operator',        'checking if this is an operator'},
 		{numericLiteral, 'numeric_literal', 'checking if this is a numeric literal'}
 	}
@@ -249,7 +282,15 @@ function Lexer.tokenize(input)
 			local i, j, token = v[1](input, input_i)
 			if i then
 				if token then --Don't insert whitespace
-					table.insert(tokens, {token = token, type = v[2], i = i, j = j})
+					local tokenType = v[2]
+					if v[2] == 'name' then
+						if keywords[token] then
+							tokenType = 'keyword'
+						elseif operatorWords[token] then
+							tokenType = 'operator'
+						end
+					end
+					table.insert(tokens, {token = token, type = tokenType, i = i, j = j})
 				end
 				input_i = j
 				break
