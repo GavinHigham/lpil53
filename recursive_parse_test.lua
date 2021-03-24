@@ -4,7 +4,8 @@ Parser = require 'recursive'
 examples = {
 [1] = [[-~not-~#dog and friend + cheese]],
 [2] = [[{happy = true, ['rain'] = 'nice'; 5+5}]],
-[3] = [[wow.would['you']():look(at).that]]
+[3] = [[wow.would['you']():look(at).that]],
+[4] = [[x.y:z('heh')]]
 }
 
 lexes = {}
