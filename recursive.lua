@@ -38,6 +38,7 @@ function Parser:reset()
 	self.index = 1
 end
 
+--TODO: Rework this to return token, type, to reduce hash lookups
 function Parser:consume()
 	local token = self.tokens[self.index]
 	self.index = self.index + 1
@@ -71,47 +72,69 @@ function Parser:check(result, errorMessage)
 end
 
 --[[
-chunk ::= block
-
-block ::= {stat} [retstat]
-
-stat ::=  ‘;’ | 
-	 varlist ‘=’ explist | 
-	 functioncall | 
-	 label | 
-	 break | 
-	 goto Name | 
-	 do block end | 
-	 while exp do block end | 
-	 repeat block until exp | 
-	 if exp then block {elseif exp then block} [else block] end | 
-	 for Name ‘=’ exp ‘,’ exp [‘,’ exp] do block end | 
-	 for namelist in explist do block end | 
-	 function funcname funcbody | 
-	 local function Name funcbody | 
-	 local namelist [‘=’ explist] 
-
 retstat ::= return [explist] [‘;’]
-
-label ::= ‘::’ Name ‘::’
 
 funcname ::= Name {‘.’ Name} [‘:’ Name]
 ]]
 
+function Parser:parse_chunk()
+	return {'chunk', self:check(self:parse_block(), 'Expected block')}
+end
+
+function Parser:parse_block()
+	--block ::= {stat} [retstat]
+	--just parse as many statements as I can until I see 'return' or something that can't be parsed
+end
+
 function Parser:parse_stat()
-	local token = self:peek()
+	local token = self:consume()
 	if not token then
 		return nil
 	end
 
-	if token.type == 'syntax' and token.token == ';' then
-		return {'stat', ';'}
+	if token.type == 'syntax' then
+		if token.token == ';' then
+			return {'stat', ';'}
+		elseif token.token == '::' then
+			local label = {'stat', {'label', {'Name', self:expect('name')}}}
+			self:consume()
+			return label
+		end
+	elseif token.type == 'keyword' then
+		if token.token == 'break' then
+			return {'stat', 'break'}
+		elseif token.token == 'goto' then
+			return {'stat', 'goto', {'Name', self:expect('name')}}
+		elseif token.token == 'do' then
+			--do block end
+		elseif token.token == 'while' then
+			--while exp do block end
+		elseif token.token == 'repeat' then
+			--repeat block until exp
+		elseif token.token == 'if' then
+			--if exp then block {elseif exp then block} [else block] end
+		elseif token.token == 'for' then
+			--for Name ‘=’ exp ‘,’ exp [‘,’ exp] do block end
+			--for namelist in explist do block end
+		elseif token.token == 'function' then
+			--function funcname funcbody
+		elseif token.token == 'local' then
+			--local function Name funcbody
+			--local namelist ['=' explist]
+		end
 	end
-	--TODO: All the other parts :)
+	--[[
+	TODO:
+		varlist '=' explist
+		functioncall
+		both of these should start with a prefixexp, so I can cheat by parsing one
+		of those first and checking if it's a functioncall (if not, it must be a varlist).
+		(Actually this means I don't need Parser:parse_functioncall())
+	]]
 end
 
 function Parser:parse_namelist()
-	local namelist = {'namelist', self:expect('Name')}
+	local namelist = {'namelist', self:expect('name')}
 	local token = self:peek()
 	while token and token.type == 'syntax' and token.token == ',' do
 		self:consume() --consume the comma
