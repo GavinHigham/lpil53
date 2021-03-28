@@ -82,8 +82,25 @@ function Parser:parse_chunk()
 end
 
 function Parser:parse_block()
-	--block ::= {stat} [retstat]
-	--just parse as many statements as I can until I see 'return' or something that can't be parsed
+	local token = self:peek()
+	local block = {'block'}
+	while token and not (token.type == 'keyword' and token.token == 'return') do
+		local stat = self:parse_stat()
+		if stat then
+			table.insert(block, stat)
+		else
+			break
+		end
+	end
+	if token and token.type == 'keyword' and token.token == 'return' then
+		self:consume()
+		table.insert(block, {'retstat', self:parse_explist()})
+		local nextToken = self:peek()
+		if nextToken and nextToken.type == 'syntax' and nextToken.token == ';' then
+			self:consume()
+		end
+	end
+	return block
 end
 
 function Parser:parse_stat()
@@ -100,7 +117,7 @@ function Parser:parse_stat()
 		elseif token.token == '::' then
 			self:consume()
 			local label = {'stat', {'label', {'Name', self:expect('name')}}}
-			self:consume()
+			self:expect('syntax', '::')
 			return label
 		end
 	elseif token.type == 'keyword' then
@@ -110,41 +127,57 @@ function Parser:parse_stat()
 		elseif token.token == 'goto' then
 			return {'stat', 'goto', {'Name', self:expect('name')}}
 		elseif token.token == 'do' then
-			stat = {'stat', 'do' self:check(self:parse_block())}
+			stat = {'stat', 'do', self:check(self:parse_block(), 'Expected block')}
 			self:expect('keyword', 'end')
 		elseif token.token == 'while' then
-			stat = {'stat', 'while', self:check(self:parse_exp())}
+			stat = {'stat', 'while', self:check(self:parse_exp(), 'Expected exp')}
 			self:expect('keyword', 'do')
-			table.insert(stat, self:check(self:parse_block()))
+			table.insert(stat, self:check(self:parse_block(), 'Expected block'))
 			self:expect('keyword', 'end')
 		elseif token.token == 'repeat' then
-			stat = {'stat', 'repeat', self:check(self:parse_block())}
+			stat = {'stat', 'repeat', self:check(self:parse_block(), 'Expected block')}
 			self:expect('keyword', 'until')
-			table.insert(self:check(self:parse_exp()))
+			table.insert(self:check(self:parse_exp(), 'Expected exp'))
 			self:expect('keyword', 'end')
 		elseif token.token == 'if' then
-			stat = {'stat', 'if', self:check(self:parse_exp())}
+			stat = {'stat', 'if', self:check(self:parse_exp(), 'Expected exp')}
 			self:expect('keyword', 'then')
-			self:check(self:parse_block())}
+			self:check(self:parse_block())
 			local nextToken = self:peek()
-			while nextToken.type == 'keyword' and nextToken.token == 'elseif' do
+			while nextToken and nextToken.type == 'keyword' and nextToken.token == 'elseif' do
 				self:consume()
-				table.insert(stat, self:check(self:parse_exp()))
+				table.insert(stat, self:check(self:parse_exp(), 'Expected exp'))
 				self:expect('keyword', 'then')
-				table.insert(stat, self:check(self:parse_block()))
+				table.insert(stat, self:check(self:parse_block(), 'Expected block'))
 				nextToken = self:peek()
 			end
-			if nextToken.type == 'keyword' and nextToken.token == 'else' then
+			if nextToken and nextToken.type == 'keyword' and nextToken.token == 'else' then
 				self:consume()
-				table.insert(stat, self:check(self:parse_block()))
+				table.insert(stat, self:check(self:parse_block(), 'Expected block'))
 			end
 			self:expect('keyword', 'end')
 		elseif token.token == 'for' then
 			--for Name ‘=’ exp ‘,’ exp [‘,’ exp] do block end
 			--for namelist in explist do block end
 		elseif token.token == 'function' then
-			--function funcname funcbody
+			local funcname = {'funcname', {'Name', self:expect('name')}}
+			local nextToken = self:peek()
+			while nextToken and nextToken.type == 'syntax' and nextToken.token == '.' do
+				self:consume()
+				table.insert(funcname, {'Name', self:expect('name')})
+				nextToken = self:peek()
+			end
+			if nextToken and nextToken.type == 'syntax' and nextToken.token == ':' then
+				self:consume()
+				table.insert(funcname, ':')
+				table.insert(funcname, {'Name', self:expect('name')})
+			end
+
+			stat = {'stat', 'function', funcname, self:check(self:parse_funcbody(), 'Expected funcbody')}
 		elseif token.token == 'local' then
+			local nextToken = self:peek()
+			if nextToken and nextToken.type == 'keyword' and nextToken.token == 'function' then
+			end
 			--local function Name funcbody
 			--local namelist ['=' explist]
 		end
@@ -178,8 +211,6 @@ function Parser:parse_funcbody()
 	namelist ::= Name {‘,’ Name}
 	]]
 
-	--something like:
-	--TODO: Define "expect", possibly combine with consume?
 	self:expect('syntax', '(')
 	local token = self:peek()
 	local parlist = {'parlist'}
@@ -202,7 +233,12 @@ function Parser:parse_funcbody()
 end
 
 function Parser:parse_explist()
-	local explist = {'explist', self:check(self:parse_exp(), 'Expected exp')}
+	local exp = self:parse_exp()
+	if not exp then
+		return nil
+	end
+
+	local explist = {'explist', exp}
 	local token = self:peek()
 	while token and token.token == ',' and token.type == 'syntax' do
 		self:consume()
@@ -286,32 +322,31 @@ function Parser:parse_prefixexp()
 	end
 
 	--Now see if we can expand into another subtype of prefixexp
-	repeat
-		token = self:peek()
-		if token then
-			if token.type == 'string_literal' then
+	token = self:peek()
+	while token do
+		if token.type == 'string_literal' then
+			prefixexp = {'functioncall', prefixexp, self:check(self:parse_args(), 'Expected args')}
+		elseif token.type == 'syntax' then
+			if token.token == '[' and token.type == 'syntax' then
+				self:consume()
+				prefixexp = {'var', prefixexp, self:check(self:parse_exp(), 'Expected exp')}
+				self:expect('syntax', ']')
+			elseif token.token == '.' and token.type == 'syntax' then
+				self:consume()
+				prefixexp = {'var', prefixexp, {'Name', self:expect('name')}}
+			elseif token.token == ':' and token.type == 'syntax' then
+				self:consume()
+				prefixexp = {'functioncall', prefixexp, {'Name', self:expect('name')}, self:check(self:parse_args(), 'Expected args')}
+			elseif token.token == '{' or token.token == '(' then
 				prefixexp = {'functioncall', prefixexp, self:check(self:parse_args(), 'Expected args')}
-			elseif token.type == 'syntax' then
-				if token.token == '[' and token.type == 'syntax' then
-					self:consume()
-					prefixexp = {'var', prefixexp, self:check(self:parse_exp(), 'Expected exp')}
-					self:expect('syntax', ']')
-				elseif token.token == '.' and token.type == 'syntax' then
-					self:consume()
-					prefixexp = {'var', prefixexp, {'Name', self:expect('name')}}
-				elseif token.token == ':' and token.type == 'syntax' then
-					self:consume()
-					prefixexp = {'functioncall', prefixexp, {'Name', self:expect('name')}, self:check(self:parse_args(), 'Expected args')}
-				elseif token.token == '{' or token.token == '(' then
-					prefixexp = {'functioncall', prefixexp, self:check(self:parse_args(), 'Expected args')}
-				else
-					break
-				end
 			else
 				break
 			end
+		else
+			break
 		end
-	until not token
+		token = self:peek()
+	end
 
 	return prefixexp
 end
