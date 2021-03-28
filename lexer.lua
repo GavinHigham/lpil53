@@ -1,7 +1,7 @@
 Lexer = {}
 
 local syntaxTokens = {
-	'::','...','(',')','{','}','[',']','.',':',';',',','=',
+	'(',')','{','}','[',']','.',':',';',',','=', --['::','...','=', are handled explicitly]]
 }
 
 local operators = {
@@ -32,14 +32,19 @@ function makeTrie(words)
 	return trie
 end
 
---With Lua's current set of operators, the path to every trie node represents a valid operator
-local syntax_trie = makeTrie(syntaxTokens)
---Same with non-operator syntax
+--With Lua's current set of operators, the path to every trie node except '==' and '..' represents a valid operator
+--Tokens '...', '.' and '=' are checked for with the syntax lexer first, so whatever is leftover should produce correct
+--results with the operator lexer.
 local operators_trie = makeTrie(operators)
 
 for i,v in ipairs(keywords) do
 	keywords[v] = true
 	keywords[i] = nil
+end
+
+for i,v in ipairs(syntaxTokens) do
+	syntaxTokens[v] = v
+	syntaxTokens[i] = nil
 end
 
 for i,v in ipairs(operatorWords) do
@@ -221,7 +226,25 @@ function comment(input, init)
 end
 
 function syntax(input, init)
-	return trieFind(input, syntax_trie, init)
+	local i = init
+	local char = syntaxTokens[input:sub(i, i)]
+	if char then
+		local nextChar = input:sub(i+1, i+1)
+		if char == ':' and nextChar == ':' then
+			return i, i+1, '::'
+		elseif char == '=' and nextChar == '=' then
+			return nil --Leave '==' for the operator lexer
+		elseif char == '.' and nextChar == '.' then
+			if input:sub(i+2, i+2) == '.' then
+				return i, i+2, '...' --'...' is a valid syntax token
+			else
+				return nil --Leave '..' for the operator lexer
+			end
+		end
+
+		return i, i, char --Everything else is a valid syntax token
+	end
+	return nil
 end
 
 function operator(input, init)
