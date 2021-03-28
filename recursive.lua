@@ -87,32 +87,58 @@ function Parser:parse_block()
 end
 
 function Parser:parse_stat()
-	local token = self:consume()
+	local token = self:peek()
 	if not token then
 		return nil
 	end
+	local stat
 
 	if token.type == 'syntax' then
 		if token.token == ';' then
+			self:consume()
 			return {'stat', ';'}
 		elseif token.token == '::' then
+			self:consume()
 			local label = {'stat', {'label', {'Name', self:expect('name')}}}
 			self:consume()
 			return label
 		end
 	elseif token.type == 'keyword' then
+		self:consume()
 		if token.token == 'break' then
 			return {'stat', 'break'}
 		elseif token.token == 'goto' then
 			return {'stat', 'goto', {'Name', self:expect('name')}}
 		elseif token.token == 'do' then
-			--do block end
+			stat = {'stat', 'do' self:check(self:parse_block())}
+			self:expect('keyword', 'end')
 		elseif token.token == 'while' then
-			--while exp do block end
+			stat = {'stat', 'while', self:check(self:parse_exp())}
+			self:expect('keyword', 'do')
+			table.insert(stat, self:check(self:parse_block()))
+			self:expect('keyword', 'end')
 		elseif token.token == 'repeat' then
-			--repeat block until exp
+			stat = {'stat', 'repeat', self:check(self:parse_block())}
+			self:expect('keyword', 'until')
+			table.insert(self:check(self:parse_exp()))
+			self:expect('keyword', 'end')
 		elseif token.token == 'if' then
-			--if exp then block {elseif exp then block} [else block] end
+			stat = {'stat', 'if', self:check(self:parse_exp())}
+			self:expect('keyword', 'then')
+			self:check(self:parse_block())}
+			local nextToken = self:peek()
+			while nextToken.type == 'keyword' and nextToken.token == 'elseif' do
+				self:consume()
+				table.insert(stat, self:check(self:parse_exp()))
+				self:expect('keyword', 'then')
+				table.insert(stat, self:check(self:parse_block()))
+				nextToken = self:peek()
+			end
+			if nextToken.type == 'keyword' and nextToken.token == 'else' then
+				self:consume()
+				table.insert(stat, self:check(self:parse_block()))
+			end
+			self:expect('keyword', 'end')
 		elseif token.token == 'for' then
 			--for Name ‘=’ exp ‘,’ exp [‘,’ exp] do block end
 			--for namelist in explist do block end
@@ -131,6 +157,7 @@ function Parser:parse_stat()
 		of those first and checking if it's a functioncall (if not, it must be a varlist).
 		(Actually this means I don't need Parser:parse_functioncall())
 	]]
+	return stat
 end
 
 function Parser:parse_namelist()

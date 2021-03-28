@@ -92,8 +92,9 @@ for i,example in ipairs(examples) do
 end
 
 -- verboseMode = true
-
-parser = Parser(lexes[1])
-parser2 = Parser(lexes[2])
-parse = parser:parse_exp()
-parse2 = parser2:parse_exp()
+parses = {
+	Parser(lexes[1]):parse_exp(),
+	Parser(lexes[2]):parse_exp(),
+	Parser(lexes[3]):parse_exp(),
+	Parser(lexes[4]):parse_exp(),
+}
