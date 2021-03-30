@@ -3,13 +3,18 @@ Parser = require 'recursive'
 
 examples = {
 [1] = [[-~not-~#dog and friend + cheese]],
-[2] = [[{happy = true, ['rain'] = 'nice'; 5+5}]],
+[2] = [[{['-'] = 'what', happy = true, ['rain'] = 'nice'; 5+5,}]],
 [3] = [[wow.would['you']():look(at).that]],
 [4] = [[x.y:z('heh')]],
 [5] = [['hello' .. "world"]],
 [6] = [[
 function testFunction(word)
 	return "lol what's up" .. word
+end]],
+[7] = [[
+function Parser:new(tokens)
+	self.tokens = tokens
+	self.index = 1
 end]],
 }
 
@@ -104,4 +109,5 @@ parses = {
 	Parser(lexes[4]):parse_exp(),
 	Parser(lexes[5]):parse_exp(),
 	Parser(lexes[6]):parse_chunk(),
+	Parser(lexes[7]):parse_chunk(),
 }

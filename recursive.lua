@@ -31,7 +31,7 @@ Parser = Object:extend()
 
 function Parser:new(tokens)
 	self.tokens = tokens
-	self.index = 1	
+	self.index = 1
 end
 
 function Parser:reset()
@@ -70,12 +70,6 @@ function Parser:check(result, errorMessage)
 		self:error(errorMessage, 2)
 	end
 end
-
---[[
-retstat ::= return [explist] [‘;’]
-
-funcname ::= Name {‘.’ Name} [‘:’ Name]
-]]
 
 function Parser:parse_chunk()
 	return {'chunk', self:check(self:parse_block(), 'Expected block')}
@@ -121,6 +115,9 @@ function Parser:parse_stat()
 			return label
 		end
 	elseif token.type == 'keyword' then
+		if token.token == 'end' then
+			return
+		end
 		self:consume()
 		if token.token == 'break' then
 			return {'stat', 'break'}
@@ -157,8 +154,25 @@ function Parser:parse_stat()
 			end
 			self:expect('keyword', 'end')
 		elseif token.token == 'for' then
-			--for Name ‘=’ exp ‘,’ exp [‘,’ exp] do block end
-			--for namelist in explist do block end
+			local name = self:expect('name')
+			local nextToken = self:peek()
+			if nextToken.type == 'syntax' and nextToken.token == '=' then
+				stat = {'stat', 'for', self:check(self:parse_exp(), 'Expected exp')}
+				self:expect('syntax', ',')
+				table.insert(stat, self:check(self:parse_exp()))
+				nextToken = self:peek()
+				if nextToken.type == 'syntax' and nextToken.token == ',' then
+					self:consume()
+					table.insert(stat, self:check(self:parse_exp(), 'Expected exp'))
+				end
+			else
+				stat = {'stat', 'for', self:check(self:parse_namelist(name), 'Expected namelist')}
+				self:expect('keyword', 'in')
+				table.insert(stat, self:check(self:parse_explist(), 'Expected explist'))
+			end
+			self:expect('keyword', 'do')
+			table.insert(stat, self:check(self:parse_block(), 'Expected block'))
+			self:expect('keyword', 'end')
 		elseif token.token == 'function' then
 			local funcname = {'funcname', {'Name', self:expect('name')}}
 			local nextToken = self:peek()
@@ -172,29 +186,44 @@ function Parser:parse_stat()
 				table.insert(funcname, ':')
 				table.insert(funcname, {'Name', self:expect('name')})
 			end
-
 			stat = {'stat', 'function', funcname, self:check(self:parse_funcbody(), 'Expected funcbody')}
 		elseif token.token == 'local' then
 			local nextToken = self:peek()
 			if nextToken and nextToken.type == 'keyword' and nextToken.token == 'function' then
+				self:consume()
+				stat = {'stat', 'local', 'function', {'Name', self:expect('name')}, self:check(self:parse_funcbody(), 'Expected funcbody')}
+			else
+				stat = {'stat', 'local', self:check(self:parse_namelist(), 'Expected namelist')}
+				nextToken = self:peek()
+				if nextToken.type == 'syntax' and nextToken.token == '=' then
+					self:consume()
+					table.insert(stat, self:check(self:parse_explist(), 'Expected explist'))
+				end
 			end
-			--local function Name funcbody
-			--local namelist ['=' explist]
 		end
 	end
-	--[[
-	TODO:
-		varlist '=' explist
-		functioncall
-		both of these should start with a prefixexp, so I can cheat by parsing one
-		of those first and checking if it's a functioncall (if not, it must be a varlist).
-		(Actually this means I don't need Parser:parse_functioncall())
-	]]
+
+	if not stat then
+		local prefixexp = self:check(self:parse_prefixexp(), 'Expected prefixexp')
+		if prefixexp[1] == 'var' then
+			stat = {'stat', self:check(self:parse_varlist(prefixexp), 'Expected varlist')}
+			self:expect('syntax', '=')
+			table.insert(stat, self:check(self:parse_explist(), 'Expected explist'))
+		elseif prefixexp[1] == 'functioncall' then
+			stat = {'stat', prefixexp}
+		else
+			self:error('Expected varlist or functioncall')
+		end
+	end
+
 	return stat
 end
 
-function Parser:parse_namelist()
-	local namelist = {'namelist', self:expect('name')}
+function Parser:parse_namelist(name)
+	if not name then
+		name = self:expect('name')
+	end
+	local namelist = {'namelist', name}
 	local token = self:peek()
 	while token and token.type == 'syntax' and token.token == ',' do
 		self:consume() --consume the comma
@@ -271,32 +300,22 @@ function Parser:parse_args()
 	end 
 end
 
-function Parser:parse_varlist()
-	local varlist = {'varlist', self:check(self:parse_var(), 'Expected var')}
+function Parser:parse_varlist(var)
+	if not var then
+		var = self:check(self:parse_var(), 'Expected var')
+	end
+	local varlist = {'varlist', var}
 	local token = self:peek()
 	while token and token.type == 'syntax' and token.token == ',' do
 		self:consume()
-		table.insert(varlist, self:check(self:parse_var(), 'Expected var'))
+		var = self:check(self:parse_prefixexp(), 'Expected var')
+		if var and var[1] ~= 'var' then
+			self:error('Expected var but found '..var[1])
+		end
+		table.insert(varlist, var)
 		token = self:peek()
 	end
 	return varlist
-end
-
-function Parser:parse_var()
-	local prefixexp = self:parse_prefixexp()
-	if prefixexp and prefixexp[1] ~= 'var' then
-		self:error('Expected var but found '..prefixexp[1])
-	end
-	return prefixexp
-end
-
-function Parser:parse_functioncall()
-	--TODO: Save parse state and rewind on failure?
-	local prefixexp = self:parse_prefixexp()
-	if prefixexp and prefixexp[1] ~= 'functioncall' then
-		self:error('Expected functioncall but found '..prefixexp[1])
-	end
-	return prefixexp
 end
 
 function Parser:parse_prefixexp()
@@ -305,9 +324,13 @@ function Parser:parse_prefixexp()
 	var ::=  Name | prefixexp ‘[’ exp ‘]’ | prefixexp ‘.’ Name
 	functioncall ::=  prefixexp args | prefixexp ‘:’ Name args
 	]]
-	local token = self:peek()
 	local prefixexp
-	local name
+	local token = self:peek()
+
+	if not token then
+		return nil
+	end
+
 	if token.type == 'syntax' and token.token == '(' then
 		self:consume()
 		prefixexp = self:parse_exp()
@@ -358,7 +381,7 @@ function Parser:parse_fieldlist()
 		local field = {'field'}
 		if token.type == 'syntax' and token.token == '[' then
 			self:consume()
-			local expression = self:parse_exp()
+			local expression = self:check(self:parse_exp(), 'Expected exp')
 			--TODO: Error if not expression?
 			self:expect('syntax', ']')
 			self:expect('syntax', '=')
@@ -379,19 +402,19 @@ function Parser:parse_fieldlist()
 	end
 
 	local fieldlist = {'fieldlist'}
-
-	repeat
-		local field = parse_field()
-		if field then
-			table.insert(fieldlist, field)
-		end
+	local field = parse_field()
+	while field do
+		table.insert(fieldlist, field)
 		local token = self:peek()
 		if token and token.type == 'syntax' and (token.token == ',' or token.token == ';') then
 			self:consume()
-		else
+		end
+		token = self:peek()
+		if token and token.type == 'syntax' and token.token == '}' then
 			break
 		end
-	until not field
+		field = self:check(parse_field(), "Expected field or '}' to close tableconstructor")
+	end
 
 	return fieldlist
 end
