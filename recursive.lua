@@ -155,6 +155,7 @@ function Parser:parse_stat()
 			local name = self:expect('name')
 			local nextToken = self:peek()
 			if nextToken.type == 'syntax' and nextToken.token == '=' then
+				self:expect('syntax', '=')
 				stat = {'stat', 'for', self:check(self:parse_exp(), 'Expected exp')}
 				self:expect('syntax', ',')
 				table.insert(stat, self:check(self:parse_exp()))
