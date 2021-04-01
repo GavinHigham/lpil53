@@ -1,221 +1,523 @@
-Parser = {stacks = {}, fn_names = {}}
+--[[
+The beginnings of a hand-written recursive descent parser for Lua.
+]]
 
-function Parser.token(t,i)
-	if t[i] then
-		return t[i].token
+Object = require 'classic/classic'
+
+local prefixOperators = {
+	['-'] = 11,
+	['not'] = 11,
+	['#'] = 11,
+	['~'] = 11,
+}
+
+local infixOperators = {
+	['or'] = 1,
+	['and'] = 2,
+	['<'] = 3, ['>'] = 3, ['<='] = 3, ['>='] = 3, ['~='] = 3, ['=='] = 3,
+	['|'] = 4,
+	['~'] = 5,
+	['&'] = 6,
+	['<<'] = 7, ['>>'] = 7,
+	['..'] = 8,
+	['+'] = 9, ['-'] = 9,
+	['*'] = 10, ['/'] = 10, ['//'] = 10, ['%'] = 10,
+	-- '...','.','::',':',';',',',
+	-- '(',')','{','}','[',']',
+	-- '=',
+	['^'] = 12,
+}
+Parser = Object:extend()
+
+function Parser:new(tokens)
+	self.tokens = tokens
+	self.index = 1
+end
+
+function Parser:reset()
+	self.index = 1
+end
+
+--TODO: Rework this to return token, type, to reduce hash lookups
+function Parser:consume()
+	local token = self.tokens[self.index]
+	self.index = self.index + 1
+	return token
+end
+
+function Parser:peek(ahead)
+	return self.tokens[self.index + (ahead or 0)]
+end
+
+function Parser:error(message, level)
+	error(self.index..': '..message, (level or 1) + 1)
+end
+
+function Parser:expect(expectedType, expectedToken)
+	local token = self:consume()
+	if not token then
+		self:error("Expected '"..(expectedToken or expectedType).."' but found EOF instead", 2)
+	elseif (expectedToken and expectedToken ~= token.token) or expectedType ~= token.type then
+		self:error("Expected '"..(expectedToken or 'token').."' of type '"..expectedType.."'", 2)
+	end
+	return token.token
+end
+
+function Parser:check(result, errorMessage)
+	if result then
+		return result
+	else
+		self:error(errorMessage, 2)
 	end
 end
 
-function Parser.type(t,i)
-	if t[i] then
-		return t[i].type
-	end
+function Parser:parse_chunk()
+	return {'chunk', self:check(self:parse_block(), 'Expected block')}
 end
 
-function Parser.callNonRecursively(fn,t,i)
-	if not t[i] then
-		return {i}
-	end
-	local stack = Parser.stacks[i] or {}
-	for i,v in ipairs(stack) do
-		if v == fn then
-			return {i}
-		end
-	end
-	table.insert(stack, fn)
-	Parser.stacks[i] = stack
-	if verboseMode then
-		local fn_name = Parser.fn_names[fn] or tostring(fn)
-		print('Calling ' .. fn_name .. ' on offset ' .. i .. ' in stack ' .. tostring(stack) .. ' with depth ' .. #stack)
-	end
-	local results = fn(t,i)
-	table.remove(stack)
-	if #stack == 0 then
-		Parser.stacks[i] = nil
-	end
-	return results
-end
-
-function Parser.empty(t,i)
-	-- print(debug.traceback())
-	return {i}
-end
-
-function Parser.opt(fn)
-	-- print(debug.traceback())
-	return Parser.alt(Parser.empty, fn)
-end
-
-function Parser.term(x)
-	-- print(debug.traceback())
-	local function tmp(t,i)
-		if Parser.token(t,i) == x then
-			return {i + 1}
-		end
-		--TODO add error checking
-		return {}
-	end
-	Parser.fn_names['term('..x..')'] = tmp
-	return tmp
-end
-
-function Parser.union(sets)
-	-- print(debug.traceback())
-	local results = {}
-	local resultExists = {}
-	for _,set in ipairs(sets) do
-		for _,v in ipairs(set) do
-			resultExists[v] = true
-		end
-	end
-	for k,v in pairs(resultExists) do
-		table.insert(results, k)
-	end
-	return results
-end
-
-function Parser.kleeneStar(fn)
-	-- print(debug.traceback())
-	local function tmp(t,i)
-		if type(fn) == 'string' then
-			fn = Parser.term(fn)
-		end
-		local results = {i}
-		while true do
-			local tmpResults = {}
-			for i,v in ipairs(results) do
-				table.insert(tmpResults, Parser.callNonRecursively(fn,t,i))
+function Parser:parse_block()
+	local token = self:peek()
+	local block = {'block'}
+	local unexpectedKeywords = {['else']=true,['elseif']=true,['end']=true,['in']=true,['return']=true,['then']=true,['until']=true}
+	while token and not (token.type == 'keyword' and unexpectedKeywords[token.token]) do
+		local lastIndex = self.index --Some debug printing stuff
+		local stat = self:parse_stat()
+		if stat then
+			table.insert(block, stat)
+			--Some debug printing stuff
+			local tokens = {}
+			for i=lastIndex, self.index-1 do
+				table.insert(tokens, self.tokens[i].token)
 			end
-			tmpResults = Parser.union(tmpResults)
-			if #tmpResults == 1 and tmpResults[1] == i then
+			print('Parsed statement:\n' .. table.concat(tokens, ' '))
+			lastIndex = self.index
+			--End debug printing stuff
+		else
+			break
+		end
+		token = self:peek()
+	end
+	if token and token.type == 'keyword' and token.token == 'return' then
+		self:consume()
+		table.insert(block, {'retstat', self:parse_explist()})
+		local nextToken = self:peek()
+		if nextToken and nextToken.type == 'syntax' and nextToken.token == ';' then
+			self:consume()
+		end
+	end
+	return block
+end
+
+function Parser:parse_stat()
+	local token = self:peek()
+	if not token then
+		return nil
+	end
+	local stat
+
+	if token.type == 'syntax' then
+		if token.token == ';' then
+			self:consume()
+			return {'stat', ';'}
+		elseif token.token == '::' then
+			self:consume()
+			local label = {'stat', {'label', {'Name', self:expect('name')}}}
+			self:expect('syntax', '::')
+			return label
+		end
+	elseif token.type == 'keyword' then
+		if token.token == 'end' then
+			return
+		end
+		self:consume()
+		if token.token == 'break' then
+			return {'stat', 'break'}
+		elseif token.token == 'goto' then
+			return {'stat', 'goto', {'Name', self:expect('name')}}
+		elseif token.token == 'do' then
+			stat = {'stat', 'do', self:check(self:parse_block(), 'Expected block')}
+			self:expect('keyword', 'end')
+		elseif token.token == 'while' then
+			stat = {'stat', 'while', self:check(self:parse_exp(), 'Expected exp')}
+			self:expect('keyword', 'do')
+			table.insert(stat, self:check(self:parse_block(), 'Expected block'))
+			self:expect('keyword', 'end')
+		elseif token.token == 'repeat' then
+			stat = {'stat', 'repeat', self:check(self:parse_block(), 'Expected block')}
+			self:expect('keyword', 'until')
+			table.insert(stat, self:check(self:parse_exp(), 'Expected exp'))
+		elseif token.token == 'if' then
+			stat = {'stat', 'if', self:check(self:parse_exp(), 'Expected exp')}
+			self:expect('keyword', 'then')
+			self:check(self:parse_block())
+			local nextToken = self:peek()
+			while nextToken and nextToken.type == 'keyword' and nextToken.token == 'elseif' do
+				self:consume()
+				table.insert(stat, self:check(self:parse_exp(), 'Expected exp'))
+				self:expect('keyword', 'then')
+				table.insert(stat, self:check(self:parse_block(), 'Expected block'))
+				nextToken = self:peek()
+			end
+			if nextToken and nextToken.type == 'keyword' and nextToken.token == 'else' then
+				self:consume()
+				table.insert(stat, self:check(self:parse_block(), 'Expected block'))
+			end
+			self:expect('keyword', 'end')
+		elseif token.token == 'for' then
+			local name = self:expect('name')
+			local nextToken = self:peek()
+			if nextToken.type == 'syntax' and nextToken.token == '=' then
+				self:expect('syntax', '=')
+				stat = {'stat', 'for', self:check(self:parse_exp(), 'Expected exp')}
+				self:expect('syntax', ',')
+				table.insert(stat, self:check(self:parse_exp()))
+				nextToken = self:peek()
+				if nextToken.type == 'syntax' and nextToken.token == ',' then
+					self:consume()
+					table.insert(stat, self:check(self:parse_exp(), 'Expected exp'))
+				end
+			else
+				stat = {'stat', 'for', self:check(self:parse_namelist(name), 'Expected namelist')}
+				self:expect('keyword', 'in')
+				table.insert(stat, self:check(self:parse_explist(), 'Expected explist'))
+			end
+			self:expect('keyword', 'do')
+			table.insert(stat, self:check(self:parse_block(), 'Expected block'))
+			self:expect('keyword', 'end')
+		elseif token.token == 'function' then
+			local funcname = {'funcname', {'Name', self:expect('name')}}
+			local nextToken = self:peek()
+			while nextToken and nextToken.type == 'syntax' and nextToken.token == '.' do
+				self:consume()
+				table.insert(funcname, {'Name', self:expect('name')})
+				nextToken = self:peek()
+			end
+			if nextToken and nextToken.type == 'syntax' and nextToken.token == ':' then
+				self:consume()
+				table.insert(funcname, ':')
+				table.insert(funcname, {'Name', self:expect('name')})
+			end
+			stat = {'stat', 'function', funcname, self:check(self:parse_funcbody(), 'Expected funcbody')}
+		elseif token.token == 'local' then
+			local nextToken = self:peek()
+			if nextToken and nextToken.type == 'keyword' and nextToken.token == 'function' then
+				self:consume()
+				stat = {'stat', 'local', 'function', {'Name', self:expect('name')}, self:check(self:parse_funcbody(), 'Expected funcbody')}
+			else
+				stat = {'stat', 'local', self:check(self:parse_namelist(), 'Expected namelist')}
+				nextToken = self:peek()
+				if nextToken.type == 'syntax' and nextToken.token == '=' then
+					self:consume()
+					table.insert(stat, self:check(self:parse_explist(), 'Expected explist'))
+				end
+			end
+		end
+	end
+
+	if not stat then
+		local prefixexp = self:check(self:parse_prefixexp(), 'Expected prefixexp')
+		if prefixexp[1] == 'var' then
+			stat = {'stat', self:check(self:parse_varlist(prefixexp), 'Expected varlist')}
+			self:expect('syntax', '=')
+			table.insert(stat, self:check(self:parse_explist(), 'Expected explist'))
+		elseif prefixexp[1] == 'functioncall' then
+			stat = {'stat', prefixexp}
+		else
+			self:error('Expected varlist or functioncall: '..(self:peek() or {token = '(EOF)'}).token)
+		end
+	end
+
+	return stat
+end
+
+function Parser:parse_namelist(name)
+	if not name then
+		name = self:expect('name')
+	end
+	local namelist = {'namelist', name}
+	local token = self:peek()
+	while token and token.type == 'syntax' and token.token == ',' do
+		local nextToken = self:peek(1) --Check the token after the comma
+		if nextToken.type == 'syntax' and nextToken.token == '...' then
+			break --Leave trailing ', ...' for parse_funcbody
+		end
+		self:consume() --consume the comma
+		table.insert(namelist, self:expect('name'))
+		token = self:peek()
+	end
+
+	return namelist
+end
+
+function Parser:parse_funcbody()
+	--[[
+	funcbody ::= ‘(’ [parlist] ‘)’ block end
+	parlist ::= namelist [‘,’ ‘...’] | ‘...’
+	namelist ::= Name {‘,’ Name}
+	]]
+
+	self:expect('syntax', '(')
+	local token = self:peek()
+	local parlist = {'parlist'}
+	if token.type == 'syntax' and token.token == '...' then
+		table.insert(parlist, '...')
+		self:consume()
+	elseif token.type == 'syntax' and token.token == ')' then
+		--Skip to closing paren
+	else
+		table.insert(parlist, self:parse_namelist())
+		--check for trailing ', ...'
+		token = self:peek()
+		if token.type == 'syntax' and token.token == ',' then
+			self:consume()
+			table.insert(parlist, self:expect('syntax', '...'))
+		end
+	end
+	self:expect('syntax', ')')
+	local block = self:check(self:parse_block(), 'Expected block')
+	self:expect('keyword', 'end')
+	return {'funcbody', parlist, block}
+end
+
+function Parser:parse_explist()
+	local exp = self:parse_exp()
+	if not exp then
+		return nil
+	end
+
+	local explist = {'explist', exp}
+	local token = self:peek()
+	while token and token.token == ',' and token.type == 'syntax' do
+		self:consume()
+		table.insert(explist, self:check(self:parse_exp(), 'Expected exp'))
+		token = self:peek()
+	end
+	return explist
+end
+
+function Parser:parse_args()
+	local token = self:peek()
+	if token.type == 'string_literal' then
+		return {'args', {'LiteralString', self:consume()}}
+	elseif token.type == 'syntax' then
+		if token.token == '(' then
+			self:consume()
+			local nextToken = self:peek()
+			local explist
+			if nextToken.token == ')' and nextToken.type == 'syntax' then
+				explist = {'explist'}
+			else
+				explist = self:check(self:parse_explist(), 'Expected explist')
+			end
+			self:expect('syntax', ')')
+			return {'args', explist}
+		elseif token.token == '{' then
+			local tableconstructor = self:check(self:parse_tableconstructor(), 'Expected tableconstructor')
+			return {'args', tableconstructor}
+		end
+	end 
+end
+
+function Parser:parse_varlist(var)
+	if not var then
+		var = self:check(self:parse_var(), 'Expected var')
+	end
+	local varlist = {'varlist', var}
+	local token = self:peek()
+	while token and token.type == 'syntax' and token.token == ',' do
+		self:consume()
+		var = self:check(self:parse_prefixexp(), 'Expected var')
+		if var and var[1] ~= 'var' then
+			self:error('Expected var but found '..var[1])
+		end
+		table.insert(varlist, var)
+		token = self:peek()
+	end
+	return varlist
+end
+
+function Parser:parse_prefixexp()
+	--[[These three productions are somewhat entangled:
+	prefixexp ::= var | functioncall | ‘(’ exp ‘)’
+	var ::=  Name | prefixexp ‘[’ exp ‘]’ | prefixexp ‘.’ Name
+	functioncall ::=  prefixexp args | prefixexp ‘:’ Name args
+	]]
+	local prefixexp
+	local token = self:peek()
+
+	if not token then
+		return nil
+	end
+
+	if token.type == 'syntax' and token.token == '(' then
+		self:consume()
+		prefixexp = self:parse_exp()
+		self:expect('syntax', ')')
+	elseif token.type == 'name' then
+		self:consume()
+		prefixexp = {'var', {'Name', token.token}}
+	end
+
+	if not prefixexp then
+		return nil
+	end
+
+	--Now see if we can expand into another subtype of prefixexp
+	token = self:peek()
+	while token do
+		if token.type == 'string_literal' then
+			prefixexp = {'functioncall', prefixexp, self:check(self:parse_args(), 'Expected args')}
+		elseif token.type == 'syntax' then
+			if token.token == '[' and token.type == 'syntax' then
+				self:consume()
+				prefixexp = {'var', prefixexp, self:check(self:parse_exp(), 'Expected exp')}
+				self:expect('syntax', ']')
+			elseif token.token == '.' and token.type == 'syntax' then
+				self:consume()
+				prefixexp = {'var', prefixexp, {'Name', self:expect('name')}}
+			elseif token.token == ':' and token.type == 'syntax' then
+				self:consume()
+				prefixexp = {'functioncall', prefixexp, {'Name', self:expect('name')}, self:check(self:parse_args(), 'Expected args')}
+			elseif token.token == '{' or token.token == '(' then
+				prefixexp = {'functioncall', prefixexp, self:check(self:parse_args(), 'Expected args')}
+			else
 				break
 			end
-			results = tmpResults
+		else
+			break
 		end
+		token = self:peek()
 	end
-	Parser.fn_names['kleeneStar('..tostring(fn)..')'] = tmp
-	return tmp
+
+	return prefixexp
 end
 
-function Parser.alt(...)
-	-- print(debug.traceback())
-	--TODO possible table.sort here
-	local fns = {...}
-	local function tmp(t,i)
-		local results = {}
-		for k,v in ipairs(fns) do
-			if type(v) == 'string' then
-				v = Parser.term(v)
+function Parser:parse_fieldlist()
+	--fieldlist ::= field {fieldsep field} [fieldsep]
+	local function parse_field()
+		local token = self:peek()
+		local field = {'field'}
+		if token.type == 'syntax' and token.token == '[' then
+			self:consume()
+			local expression = self:check(self:parse_exp(), 'Expected exp')
+			--TODO: Error if not expression?
+			self:expect('syntax', ']')
+			self:expect('syntax', '=')
+			table.insert(field, expression)
+		elseif token.type == 'name' then
+			local nextToken = self:peek(1)
+			if nextToken and nextToken.type == 'syntax' and nextToken.token == '=' then
+				self:consume()
+				self:expect('syntax', '=')
+				table.insert(field, {'Name', token.token})
 			end
-			table.insert(results, Parser.callNonRecursively(v,t,i))
-		end
-		return Parser.union(results)
-	end
-	Parser.fn_names['alt('..tostring(...)..')'] = tmp
-	return tmp
-end
-
-function Parser.seq(...)
-	-- print(debug.traceback())
-	local fns = {...}
-	local function tmp(t,i)
-		local result = {i}
-		for _,fn in ipairs(fns) do
-			if type(fn) == 'string' then
-				fn = Parser.term(fn)
-			end
-			local tmpResult = {}
-			for _,v in ipairs(result) do
-				table.insert(tmpResult, Parser.callNonRecursively(fn,t,v))
-			end
-			result = Parser.union(tmpResult)
 		end
 
-		return result
+		table.insert(field, self:check(self:parse_exp(), 'Expected exp'))
+		return field
 	end
-	Parser.fn_names['seq('..tostring(...)..')'] = tmp
-	return tmp
+
+	local fieldlist = {'fieldlist'}
+	local field = parse_field()
+	while field do
+		table.insert(fieldlist, field)
+		local token = self:peek()
+		if token and token.type == 'syntax' and (token.token == ',' or token.token == ';') then
+			self:consume()
+		end
+		token = self:peek()
+		if token and token.type == 'syntax' and token.token == '}' then
+			break
+		end
+		field = self:check(parse_field(), "Expected field or '}' to close tableconstructor")
+	end
+
+	return fieldlist
 end
 
--- Implementing the Lua parser
-local P = Parser
+function Parser:parse_tableconstructor()
+	local token = self:peek()
+	local tableconstructor
+	if token.token == '{' and token.type == 'syntax' then
+		self:consume()
+		--Is it an empty table constructor?
+		local nextToken = self:peek()
+		if nextToken.token == '}' and nextToken.type == 'syntax' then
+			tableconstructor = {'tableconstructor'}
+		else
+			tableconstructor = {'tableconstructor', self:parse_fieldlist()}
+		end
+		self:expect('syntax', '}')
+	end
+	return tableconstructor
+end
 
-function LiteralString(t,i)
-	if P.type(t,i) == 'string_literal' then
-		return {i+1}
+function Parser:parse_exp(precedence)
+	precedence = precedence or 0
+	local token = self:peek()
+	local firstIndex = self.index
+	if not token then
+		self:error('Expected an expression but found EOF instead')
+	end
+	local expression
+
+	--[[exp ::= nil | false | true | Numeral | LiteralString | ‘...’ | functiondef | 
+		prefixexp | tableconstructor | exp binop exp | unop exp ]]
+
+	local reservedExpression = {['nil'] = true, ['false'] = true, ['true'] = true}
+	if token.type == 'keyword' then
+		if reservedExpression[token.token] then
+			expression = {'exp', token.token}
+		elseif token.token == 'function' then
+			self:consume()
+			expression = {'exp', {'functiondef', self:check(self:parse_funcbody(), 'Expected functiondef')}}
+		end
+	elseif token.type == 'numeric_literal' then
+		expression = {'exp', {'Numeral', token.token}}
+	elseif token.type == 'string_literal' then
+		expression = {'exp', {'LiteralString', token.token}}
+	elseif token.type == 'syntax' then
+		if token.token == '...' then
+			expression = {'exp', '...'}
+		elseif token.token == '(' then
+			expression = {'exp', self:check(self:parse_prefixexp(), 'Expected prefixexp')}
+		elseif token.token == '{' then
+			expression = {'exp', self:check(self:parse_tableconstructor(), 'Expected tableconstructor')}
+		else
+			self:error('Unexpected syntax: ' .. token.token)
+		end
+	elseif token.type == 'operator' and prefixOperators[token.token] then
+		self:consume()
+		expression = {'exp', token.token, self:parse_exp(prefixOperators[token.token])}
+	elseif token.type == 'name' then
+		expression = {'exp', self:parse_prefixexp()}
+	end
+
+	--If the expression was a single token, consume it
+	if expression and token == self:peek() then
+		self:consume()
+	end
+
+	token = self:peek()
+	while token and (precedence < (infixOperators[token.token] or 0)) do
+		token = self:consume()
+		expression = {'exp', expression, token.token, self:parse_exp(infixOperators[token.token])}
+		token = self:peek()
+	end
+
+	--Some debugging stuff
+	local tokens = {}
+	for i=firstIndex, self.index-1 do
+		table.insert(tokens, self.tokens[i].token)
+	end
+	if expression then
+		print('Parsed expression:\n' .. table.concat(tokens, ' '))
 	else
-		return {i}
+		print('Could not parse expression:\n' .. table.concat(tokens, ' '))
 	end
+
+
+	return expression
 end
-
-function Name(t, i)
-	if P.type(t,i) == 'name' then
-		return {i+1}
-	else
-		return {i}
-	end
-end
-
-function Numeral(t, i)
-	if P.type(t,i) == 'numeric_literal' then
-		return {i+1}
-	else
-		return {i}
-	end
-end
-
-function chunk(t,i) return block(t,i) end
-function block(t,i) return P.seq(P.kleeneStar(stat), P.opt(retstat))(t,i) end
-function stat(t,i) return P.alt(
-		';',
-		P.seq(varlist, '=', explist),
-		functioncall,
-		label,
-		'break',
-		P.seq('goto', Name),
-		P.seq('do', block, 'end'),
-		P.seq('while', exp, 'do', block, 'end'),
-		P.seq('repeat', block, 'until', exp),
-		P.seq('if', exp, 'then', exp, ',', exp, P.opt(P.seq(',', exp)), 'do', block, 'end'),
-		P.seq('for', namelist, 'in', explist, 'do', block, 'end'),
-		P.seq('function', funcname, funcbody),
-		P.seq('local', 'function', Name, funcbody),
-		P.seq('local', namelist, P.opt(P.seq('=', explist))))(t,i) end
-
-function retstat(t,i) return P.seq('return', P.opt(explist), P.opt(';'))(t,i) end
-function label(t,i) return P.seq('::', Name, '::')(t,i) end
-function funcname(t,i) return P.seq(Name, P.kleeneStar(P.seq('.', Name)), P.opt(P.seq(':', Name)))(t,i) end
-function varlist(t,i) return P.seq(var, P.kleeneStar(P.seq(',', var)))(t,i) end
-function var(t,i) return P.alt(Name, P.seq(prefixexp, '[', exp, ']'), P.seq(prefixexp, '.', Name))(t,i) end
-function namelist(t,i) return P.seq(Name, P.kleeneStar(P.seq(',', Name)))(t,i) end
-function explist(t,i) return P.seq(exp, P.kleeneStar(P.seq(',', exp)))(t,i) end
-function exp(t,i) return P.alt('nil', 'false', 'true', Numeral, LiteralString, '...' , functiondef,
-	 prefixexp, tableconstructor, P.seq(exp, binop, exp), P.seq(uno, exp))(t,i) end --Need to do something about this left recursion
-function prefixexp(t,i) return P.alt(var, functioncall, P.seq('(', exp, ')'))(t,i) end
-function functioncall(t,i) return P.alt(P.seq(prefixexp, args), P.seq(prefixexp, ':', Name, args))(t,i) end
-function args(t,i) return P.alt(P.seq('(', P.opt(explist), ')'), tableconstructor, LiteralString)(t,i) end
-function functiondef(t,i) return P.seq(functionterm, funcbody)(t,i) end
-function funcbody(t,i) return P.seq('(', P.opt(parlist), ')', block, 'end')(t,i) end
-function parlist(t,i) return P.alt(P.seq(namelist, P.opt(',', '...')), '...')(t,i) end
-function tableconstructor(t,i) return P.seq('{', P.opt(fieldlist), '}')(t,i) end
-function fieldlist(t,i) return P.seq(field, P.kleeneStar(P.seq(fieldsep, field)), P.opt(fieldsep))(t,i) end
-function field(t,i) return P.alt(P.seq('[', exp, ']', '=', exp), P.seq(Name, '=', exp), exp)(t,i) end
-function fieldsep(t,i) return P.alt(',', ';')(t,i) end
-function binop(t,i) return P.alt('+', '-', '*', '/', '//', '^', '%',
-	 '&', '~', '|', '>>', '<<', '..', 
-	 '<', '<=', '>', '>=', '==', '~=', 
-	 'and', 'or')(t,i) end
-function unop(t,i) return P.alt('-', 'not', '#', '~')(t,i) end
-
-function Parser.parse(t,i)
-	return chunk(t, i or 1)
-end
-
-print('Parser functions:')
-for k,v in pairs(Parser) do
-	print(k,v)
-	Parser.fn_names[v] = k
-end
-print('\n')
 
 return Parser

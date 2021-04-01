@@ -1,5 +1,5 @@
 Lexer = require 'lexer'
-Parser = require 'recursive'
+Parser = require 'parser'
 
 examples = {
 [1] = [[-~not-~#dog and friend + cheese]],
@@ -11,35 +11,8 @@ examples = {
 function testFunction(word)
 	return "lol what's up" .. word
 end]],
-[7] = [[
-function Parser:new(tokens)
-	self.tokens = tokens
-	self.index = 1
-end]],
-[8] = [[
-function Parser:reset()
-	self.index = 1
-end]],
-[9] = [[
-function Parser:consume()
-	local token = self.tokens[self.index]
-	self.index = self.index + 1
-	return token
-end]],
-[10] = [[
-function Parser:error(message, level)
-	error(self.index..': '..message, (level or 1) + 1)
-end]],
-[11] = [[
-function Parser:expect(expectedType, expectedToken)
-	local token = self:consume()
-	if not token then
-		self:error("Expected '"..(expectedToken or expectedType).."' but found EOF instead", 2)
-	elseif (expectedToken and expectedToken ~= token.token) or expectedType ~= token.type then
-		self:error("Expected '"..(expectedToken or 'token').."' of type '"..expectedType.."'", 2)
-	end
-	return token.token
-end]],
+[7] = io.open('parser.lua', 'r'):read('a'),
+[8] = io.open('lexer.lua', 'r'):read('a'),
 }
 
 lexes = {}
@@ -134,7 +107,4 @@ parses = {
 	Parser(lexes[6]):parse_chunk(),
 	Parser(lexes[7]):parse_chunk(),
 	Parser(lexes[8]):parse_chunk(),
-	Parser(lexes[9]):parse_chunk(),
-	Parser(lexes[10]):parse_chunk(),
-	Parser(lexes[11]):parse_stat(),
 }
