@@ -78,13 +78,15 @@ end
 function Parser:parse_block()
 	local token = self:peek()
 	local block = {'block'}
-	while token and not (token.type == 'keyword' and token.token == 'return') do
+	local unexpectedKeywords = {['else']=true,['elseif']=true,['end']=true,['in']=true,['return']=true,['then']=true,['until']=true}
+	while token and not (token.type == 'keyword' and unexpectedKeywords[token.token]) do
 		local stat = self:parse_stat()
 		if stat then
 			table.insert(block, stat)
 		else
 			break
 		end
+		token = self:peek()
 	end
 	if token and token.type == 'keyword' and token.token == 'return' then
 		self:consume()
@@ -115,9 +117,6 @@ function Parser:parse_stat()
 			return label
 		end
 	elseif token.type == 'keyword' then
-		if token.token == 'end' then
-			return
-		end
 		self:consume()
 		if token.token == 'break' then
 			return {'stat', 'break'}
@@ -134,8 +133,7 @@ function Parser:parse_stat()
 		elseif token.token == 'repeat' then
 			stat = {'stat', 'repeat', self:check(self:parse_block(), 'Expected block')}
 			self:expect('keyword', 'until')
-			table.insert(self:check(self:parse_exp(), 'Expected exp'))
-			self:expect('keyword', 'end')
+			table.insert(stat, self:check(self:parse_exp(), 'Expected exp'))
 		elseif token.token == 'if' then
 			stat = {'stat', 'if', self:check(self:parse_exp(), 'Expected exp')}
 			self:expect('keyword', 'then')
@@ -212,7 +210,7 @@ function Parser:parse_stat()
 		elseif prefixexp[1] == 'functioncall' then
 			stat = {'stat', prefixexp}
 		else
-			self:error('Expected varlist or functioncall')
+			self:error('Expected varlist or functioncall: '..(self:peek() or {token = '(EOF)'}).token)
 		end
 	end
 
@@ -226,8 +224,13 @@ function Parser:parse_namelist(name)
 	local namelist = {'namelist', name}
 	local token = self:peek()
 	while token and token.type == 'syntax' and token.token == ',' do
+		local nextToken = self:peek(1) --Check the token after the comma
+		if nextToken.type == 'syntax' and nextToken.token == '...' then
+			break --Leave trailing ', ...' for parse_funcbody
+		end
 		self:consume() --consume the comma
 		table.insert(namelist, self:expect('name'))
+		token = self:peek()
 	end
 
 	return namelist
@@ -246,6 +249,8 @@ function Parser:parse_funcbody()
 	if token.type == 'syntax' and token.token == '...' then
 		table.insert(parlist, '...')
 		self:consume()
+	elseif token.type == 'syntax' and token.token == ')' then
+		--Skip to closing paren
 	else
 		table.insert(parlist, self:parse_namelist())
 		--check for trailing ', ...'
@@ -387,17 +392,15 @@ function Parser:parse_fieldlist()
 			self:expect('syntax', '=')
 			table.insert(field, expression)
 		elseif token.type == 'name' then
-			self:consume()
-			self:expect('syntax', '=')
-			table.insert(field, {'Name', token.token})
+			local nextToken = self:peek(1)
+			if nextToken and nextToken.type == 'syntax' and nextToken.token == '=' then
+				self:consume()
+				self:expect('syntax', '=')
+				table.insert(field, {'Name', token.token})
+			end
 		end
 
-		local expression = self:parse_exp()
-		if not expression or expression[1] ~= 'exp' then
-			self:error('Expected expression')
-		end
-		table.insert(field, expression)
-
+		table.insert(field, self:check(self:parse_exp(), 'Expected exp'))
 		return field
 	end
 
@@ -453,7 +456,7 @@ function Parser:parse_exp(precedence)
 			expression = {'exp', token.token}
 		elseif token.token == 'function' then
 			self:consume()
-			expression = {'exp', {'functiondef', self:parse_funcbody()}}
+			expression = {'exp', {'functiondef', self:check(self:parse_funcbody(), 'Expected functiondef')}}
 		end
 	elseif token.type == 'numeric_literal' then
 		expression = {'exp', {'Numeral', token.token}}
@@ -463,14 +466,11 @@ function Parser:parse_exp(precedence)
 		if token.token == '...' then
 			expression = {'exp', '...'}
 		elseif token.token == '(' then
-			expression = {'exp', self:parse_prefixexp()}
+			expression = {'exp', self:check(self:parse_prefixexp(), 'Expected prefixexp')}
+		elseif token.token == '{' then
+			expression = {'exp', self:check(self:parse_tableconstructor(), 'Expected tableconstructor')}
 		else
-			local tableconstructor = self:parse_tableconstructor()
-			if tableconstructor then
-				expression = {'exp', tableconstructor}
-			else
-				self:error('Expected tableconstructor')
-			end
+			self:error('Unexpected syntax: ' .. token.token)
 		end
 	elseif token.type == 'operator' and prefixOperators[token.token] then
 		self:consume()
