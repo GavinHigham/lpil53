@@ -71,6 +71,20 @@ function Parser:check(result, errorMessage)
 	end
 end
 
+function Parser:tokens_tostring(from, to)
+	local tokens = {}
+	for i=from,to do
+		table.insert(tokens, self.tokens[i].token)
+	end
+	return table.concat(tokens, ' ')
+end
+
+function Parser:debugPrintTokenRange(from, to, prefix)
+	if verboseMode then
+		print((prefix or '')..self:tokens_tostring(from, to))
+	end
+end
+
 function Parser:parse_chunk()
 	return {'chunk', self:check(self:parse_block(), 'Expected block')}
 end
@@ -80,18 +94,12 @@ function Parser:parse_block()
 	local block = {'block'}
 	local unexpectedKeywords = {['else']=true,['elseif']=true,['end']=true,['in']=true,['return']=true,['then']=true,['until']=true}
 	while token and not (token.type == 'keyword' and unexpectedKeywords[token.token]) do
-		local lastIndex = self.index --Some debug printing stuff
+		local lastIndex = self.index
 		local stat = self:parse_stat()
 		if stat then
 			table.insert(block, stat)
-			--Some debug printing stuff
-			local tokens = {}
-			for i=lastIndex, self.index-1 do
-				table.insert(tokens, self.tokens[i].token)
-			end
-			print('Parsed statement:\n' .. table.concat(tokens, ' '))
+			self:debugPrintTokenRange(lastIndex, self.index-1, 'Parsed statement: ')
 			lastIndex = self.index
-			--End debug printing stuff
 		else
 			break
 		end
@@ -505,15 +513,10 @@ function Parser:parse_exp(precedence)
 		token = self:peek()
 	end
 
-	--Some debugging stuff
-	local tokens = {}
-	for i=firstIndex, self.index-1 do
-		table.insert(tokens, self.tokens[i].token)
-	end
 	if expression then
-		print('Parsed expression:\n' .. table.concat(tokens, ' '))
+		self:debugPrintTokenRange(firstIndex, self.index-1, 'Parsed expression: ')
 	else
-		print('Could not parse expression:\n' .. table.concat(tokens, ' '))
+		self:debugPrintTokenRange(firstIndex, self.index-1, 'Could not parse expression: ')
 	end
 
 

@@ -86,8 +86,8 @@ end
 
 function r()
 	package.loaded['lexer'] = nil
-	package.loaded['recursive'] = nil
-	dofile 'recursive_parse_test.lua'
+	package.loaded['parser'] = nil
+	dofile 'parse_test.lua'
 end
 
 -- local lexerstr = io.open('lexer.lua'):read('a')
