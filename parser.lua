@@ -176,7 +176,7 @@ function Parser:parse_stat()
 			local nextToken = self:peek()
 			if nextToken.type == 'syntax' and nextToken.token == '=' then
 				self:expect('syntax', '=')
-				stat = {'stat', 'for', self:check(self:parse_exp(), 'Expected exp')}
+				stat = {'stat', 'for', {'Name', name}, self:check(self:parse_exp(), 'Expected exp')}
 				self:expect('syntax', ',')
 				table.insert(stat, self:check(self:parse_exp()))
 				nextToken = self:peek()
@@ -266,13 +266,14 @@ function Parser:parse_funcbody()
 
 	self:expect('syntax', '(')
 	local token = self:peek()
-	local parlist = {'parlist'}
+	local parlist
 	if token.type == 'syntax' and token.token == '...' then
-		table.insert(parlist, '...')
+		parlist = {'parlist', '...'}
 		self:consume()
 	elseif token.type == 'syntax' and token.token == ')' then
 		--Skip to closing paren
 	else
+		parlist = {'parlist'}
 		table.insert(parlist, self:parse_namelist())
 		--check for trailing ', ...'
 		token = self:peek()
@@ -478,7 +479,7 @@ function Parser:parse_exp(precedence)
 			expression = {'exp', token.token}
 		elseif token.token == 'function' then
 			self:consume()
-			expression = {'exp', {'functiondef', self:check(self:parse_funcbody(), 'Expected functiondef')}}
+			expression = {'exp', {'functiondef', self:check(self:parse_funcbody(), 'Expected funcbody')}}
 		end
 	elseif token.type == 'numeric_literal' then
 		expression = {'exp', {'Numeral', token.token}}
