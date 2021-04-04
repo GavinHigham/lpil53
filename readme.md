@@ -17,8 +17,8 @@ Located in lexer.lua, the lexer's job is to accept a string and turn it into a t
 
 Each token is a table with the following fields:
 
-- token, a string containing the value of the token itself. If this is a string_literal, the original quotes have been left on.
-- type, a string indicating what type the lexer has identified the token as. It will be one of these values:
+- **token**, a string containing the value of the token itself. If this is a string_literal, the original quotes have been left on.
+- **type**, a string indicating what type the lexer has identified the token as. It will be one of these values:
 	- 'name'
 	- 'whitespace'
 	- 'comment'
@@ -26,8 +26,8 @@ Each token is a table with the following fields:
 	- 'syntax'
 	- 'operator'
 	- 'numeric_literal'
-- i, the index at which the token starts within the original string passed to the lexer. This is useful for printing those neat error messages that point directly where a mistake was made on a given line
-- j, the index at which the token ends
+- **i**, the index at which the token starts within the original string passed to the lexer. This is useful for printing those neat error messages that point directly where a mistake was made on a given line
+- **j**, the index at which the token ends
 
 Currently, the lexer discards whitespace and comment tokens, though they could be emitted without much modification (the parser would have to be modified to skip over them in its consume and peek functions).
 
@@ -95,7 +95,7 @@ For brevity and simplicity of implementation, each node in the tree is a table w
 - **explist** contains one or more expressions:
 
 	{'explist', {'exp', ...}, {'exp', ...}, {'exp', ...}}
-- **exp** The second-most complicated node. It can be a nil, false or true, a *Numeral* (numeric literal), a *LiteralString* (a string literal), a ..., a function definition (this is the only node in which a *functiondef* will appear), a prefix expression descendent (again, a *var*, *functioncall* or *exp*), a table constructor, a binary operation with an operator and two sub-expressions, or a unary operation with an operator and one sub-expression:
+- **exp** The second-most complicated node. It can be a nil, false or true, a *Numeral* (numeric literal), a *LiteralString* (a string literal), a '...', a function definition (this is the only node in which a *functiondef* will appear), a prefix expression descendent (again, a *var*, *functioncall* or *exp*), a table constructor, a binary operation with an operator and two sub-expressions, or a unary operation with an operator and one sub-expression:
 
 	{'exp', 'nil'}
 
@@ -180,3 +180,19 @@ For brevity and simplicity of implementation, each node in the tree is a table w
 	or
 
 	{'field', {'Name', ...}, {'exp', ...}}
+
+## Why write this in Lua?
+
+The simple reason is that I find Lua to be an enjoyable and productive language to write in. Other reasons include:
+
+- I can use this as a simple drop-in to implement advanced metaprogramming capabilities
+- I can use this as the basis for a polyfill-like system to keep Lua code working as new versions of Lua are released
+-I can create a plugin for RXI's Lite text editor with AST-aware syntax highlighting and auto-suggestion
+- It was relatively easy to write it this way, and the result is nicely terse
+- It's easier to sandbox, should I choose to include this in another project to parse user Lua scripts
+
+## What's next?
+
+This is the first full-language parser I have ever written, so there are almost certainly bugs to fix. The tests are far from comprehensive and need to be expanded. While it can parse itself almost instantly and is, to the best of my knowledge, linear time with the size of the input, there is room for optimization. Aside from that, I may make changes as necessary to make the AST easier to work with, as I use the AST for other projects.
+
+I have no plans to expand this into a full-fledged Lua implementation - the official Lua release and projects like LuaJit already accomplish that better than I could. Instead, I intend for this to be a stepping stone to other useful tools I can create for the Lua ecosystem.
