@@ -62,13 +62,13 @@ For brevity and simplicity of implementation, each node in the tree is a table w
 
 		{'stat', 'function', {'funcname', ...}, {'funcbody'}}.
 		
-	The *funcname* node is one or more *Name* nodes (each name in the nested function declaration, such as "function x.y.z()") optionally followed by a ':' and another *Name* (if the function is declared with the "method" syntax, such as "function Dog:bark()"):
+		- The *funcname* node is one or more *Name* nodes (each name in the nested function declaration, such as "function x.y.z()") optionally followed by a ':' and another *Name* (if the function is declared with the "method" syntax, such as "function Dog:bark()"):
 
-		{'funcname', {'Name', 'x'}, {'Name', 'y'}, {'Name', 'z'}}
+			{'funcname', {'Name', 'x'}, {'Name', 'y'}, {'Name', 'z'}}
 
-		or
+			or
 
-		{'funcname', {'Name', 'Dog'}, ':', {'Name', 'bark'}}
+			{'funcname', {'Name', 'Dog'}, ':', {'Name', 'bark'}}
 	- **local** A local function or variable definition. If a local function, has a *Name* and a function body:
 
 		{'stat', 'local', 'function', {'Name', ...}, {'funcbody', ...}}
