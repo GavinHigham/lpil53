@@ -34,7 +34,7 @@ Currently, the lexer discards whitespace and comment tokens, though they could b
 ## The Parser
 Located in parser.lua, the parser's job is to accept a table of tokens and turn it into an abstract syntax tree (AST), a tree that indicates the structure of the program following Lua 5.3's grammar from the [reference manual](http://www.lua.org/manual/5.3/manual.html#9). Note that the tree produced by this parser is *almost* a parse tree, but some redundant tokens have been omitted where they are not necessary. A program equivalent to the original may be produced by following a depth-first traversal of the tree and inserting these omitted tokens where needed (including parentheses in some places).
 
-For brevity and simplicity of implementation, each node in the tree is a table with strings and tables located at integer indices. In all cases, the string at index 1 indicates the name of the production rule that was expanded from the grammar (in a few cases skipping a level to avoid reduncancy, noted below), and subsequent values are either strings to disambiguate between alternatives from a production rule, nested tables themselves indicating production rules taken, or the string value of a parsed token from the lex (a "terminal", meaning it required no further rule expansion). The possible nodes present in the AST are listed below:
+For brevity and simplicity of implementation, each node in the tree is a table with strings and tables located at integer indices. In all cases, the string at index 1 indicates the name of the production rule that was expanded from the grammar (in a few cases skipping a level to avoid redundancy, noted below), and subsequent values are either strings to disambiguate between alternatives from a production rule, nested tables themselves indicating production rules taken, or the string value of a parsed token from the lex (a "terminal", meaning it required no further rule expansion). The possible nodes present in the AST are listed below:
 
 - **chunk** Contains a single block and nothing else: {'chunk', {'block', ...}}
 - **block** Contains any number of statements followed by an optional return statement: {'block', {'stat' , ...}, {'stat', ...}, {'retstat'}}
@@ -61,6 +61,7 @@ For brevity and simplicity of implementation, each node in the tree is a table w
 	- **function** A *funcname* followed by a function body. The *funcname* node will only ever appear within a function statement node:
 
 		{'stat', 'function', {'funcname', ...}, {'funcbody'}}.
+		
 	The *funcname* node is one or more *Name* nodes (each name in the nested function declaration, such as "function x.y.z()") optionally followed by a ':' and another *Name* (if the function is declared with the "method" syntax, such as "function Dog:bark()"):
 
 		{'funcname', {'Name', 'x'}, {'Name', 'y'}, {'Name', 'z'}}
@@ -187,7 +188,7 @@ The simple reason is that I find Lua to be an enjoyable and productive language 
 
 - I can use this as a simple drop-in to implement advanced metaprogramming capabilities
 - I can use this as the basis for a polyfill-like system to keep Lua code working as new versions of Lua are released
--I can create a plugin for RXI's Lite text editor with AST-aware syntax highlighting and auto-suggestion
+- I can create a plugin for RXI's Lite text editor with AST-aware syntax highlighting and auto-suggestion
 - It was relatively easy to write it this way, and the result is nicely terse
 - It's easier to sandbox, should I choose to include this in another project to parse user Lua scripts
 
