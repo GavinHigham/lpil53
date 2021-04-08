@@ -1,4 +1,4 @@
-# Lua 5.3 Parser in Lua 5.3 (LPIL 5.3)
+# Lua 5.3 Parser in Lua 5.3 (LPIL53)
 
 The purpose of this project is to have a simple and small Lua 5.3 parser written entirely in Lua 5.3 - no libraries, LPeg, etc. It is intended to be simple and succinct so that it is easy to understand and modify.
 
