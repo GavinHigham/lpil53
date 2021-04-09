@@ -89,10 +89,10 @@ function Parser:parse_chunk()
 	return {'chunk', self:check(self:parse_block(), 'Expected block')}
 end
 
+local unexpectedKeywords = {['else']=true,['elseif']=true,['end']=true,['in']=true,['return']=true,['then']=true,['until']=true}
 function Parser:parse_block()
 	local token = self:peek()
 	local block = {'block'}
-	local unexpectedKeywords = {['else']=true,['elseif']=true,['end']=true,['in']=true,['return']=true,['then']=true,['until']=true}
 	while token and not (token.type == 'keyword' and unexpectedKeywords[token.token]) do
 		local lastIndex = self.index
 		local stat = self:parse_stat()
@@ -116,6 +116,10 @@ function Parser:parse_block()
 	return block
 end
 
+local statementKeywords = {
+	['local']=true, ['if']=true, ['for']=true, ['while']=true, ['function']=true,
+	['break']=true, ['goto']=true, ['do']=true, ['repeat']=true
+}
 function Parser:parse_stat()
 	local token = self:peek()
 	if not token then
@@ -134,90 +138,92 @@ function Parser:parse_stat()
 			return label
 		end
 	elseif token.type == 'keyword' then
-		if token.token == 'end' then
+		local tokentoken = token.token
+		if tokentoken == 'end' then
 			return
 		end
 		self:consume()
-		if token.token == 'break' then
-			return {'stat', 'break'}
-		elseif token.token == 'goto' then
-			return {'stat', 'goto', {'Name', self:expect('name')}}
-		elseif token.token == 'do' then
-			stat = {'stat', 'do', self:check(self:parse_block(), 'Expected block')}
-			self:expect('keyword', 'end')
-		elseif token.token == 'while' then
-			stat = {'stat', 'while', self:check(self:parse_exp(), 'Expected exp')}
-			self:expect('keyword', 'do')
-			table.insert(stat, self:check(self:parse_block(), 'Expected block'))
-			self:expect('keyword', 'end')
-		elseif token.token == 'repeat' then
-			stat = {'stat', 'repeat', self:check(self:parse_block(), 'Expected block')}
-			self:expect('keyword', 'until')
-			table.insert(stat, self:check(self:parse_exp(), 'Expected exp'))
-		elseif token.token == 'if' then
-			stat = {'stat', 'if', self:check(self:parse_exp(), 'Expected exp')}
-			self:expect('keyword', 'then')
-			self:check(self:parse_block())
-			local nextToken = self:peek()
-			while nextToken and nextToken.type == 'keyword' and nextToken.token == 'elseif' do
-				self:consume()
-				table.insert(stat, self:check(self:parse_exp(), 'Expected exp'))
+		if statementKeywords[tokentoken] then
+			if tokentoken == 'local' then
+				local nextToken = self:peek()
+				if nextToken and nextToken.type == 'keyword' and nextToken.token == 'function' then
+					self:consume()
+					stat = {'stat', 'local', 'function', {'Name', self:expect('name')}, self:check(self:parse_funcbody(), 'Expected funcbody')}
+				else
+					stat = {'stat', 'local', self:check(self:parse_namelist(), 'Expected namelist')}
+					nextToken = self:peek()
+					if nextToken.type == 'syntax' and nextToken.token == '=' then
+						self:consume()
+						table.insert(stat, self:check(self:parse_explist(), 'Expected explist'))
+					end
+				end
+			elseif tokentoken == 'if' then
+				stat = {'stat', 'if', self:check(self:parse_exp(), 'Expected exp')}
 				self:expect('keyword', 'then')
-				table.insert(stat, self:check(self:parse_block(), 'Expected block'))
-				nextToken = self:peek()
-			end
-			if nextToken and nextToken.type == 'keyword' and nextToken.token == 'else' then
-				self:consume()
-				table.insert(stat, self:check(self:parse_block(), 'Expected block'))
-			end
-			self:expect('keyword', 'end')
-		elseif token.token == 'for' then
-			local name = self:expect('name')
-			local nextToken = self:peek()
-			if nextToken.type == 'syntax' and nextToken.token == '=' then
-				self:expect('syntax', '=')
-				stat = {'stat', 'for', {'Name', name}, self:check(self:parse_exp(), 'Expected exp')}
-				self:expect('syntax', ',')
-				table.insert(stat, self:check(self:parse_exp()))
-				nextToken = self:peek()
-				if nextToken.type == 'syntax' and nextToken.token == ',' then
+				self:check(self:parse_block())
+				local nextToken = self:peek()
+				while nextToken and nextToken.type == 'keyword' and nextToken.token == 'elseif' do
 					self:consume()
 					table.insert(stat, self:check(self:parse_exp(), 'Expected exp'))
+					self:expect('keyword', 'then')
+					table.insert(stat, self:check(self:parse_block(), 'Expected block'))
+					nextToken = self:peek()
 				end
-			else
-				stat = {'stat', 'for', self:check(self:parse_namelist(name), 'Expected namelist')}
-				self:expect('keyword', 'in')
-				table.insert(stat, self:check(self:parse_explist(), 'Expected explist'))
-			end
-			self:expect('keyword', 'do')
-			table.insert(stat, self:check(self:parse_block(), 'Expected block'))
-			self:expect('keyword', 'end')
-		elseif token.token == 'function' then
-			local funcname = {'funcname', {'Name', self:expect('name')}}
-			local nextToken = self:peek()
-			while nextToken and nextToken.type == 'syntax' and nextToken.token == '.' do
-				self:consume()
-				table.insert(funcname, {'Name', self:expect('name')})
-				nextToken = self:peek()
-			end
-			if nextToken and nextToken.type == 'syntax' and nextToken.token == ':' then
-				self:consume()
-				table.insert(funcname, ':')
-				table.insert(funcname, {'Name', self:expect('name')})
-			end
-			stat = {'stat', 'function', funcname, self:check(self:parse_funcbody(), 'Expected funcbody')}
-		elseif token.token == 'local' then
-			local nextToken = self:peek()
-			if nextToken and nextToken.type == 'keyword' and nextToken.token == 'function' then
-				self:consume()
-				stat = {'stat', 'local', 'function', {'Name', self:expect('name')}, self:check(self:parse_funcbody(), 'Expected funcbody')}
-			else
-				stat = {'stat', 'local', self:check(self:parse_namelist(), 'Expected namelist')}
-				nextToken = self:peek()
-				if nextToken.type == 'syntax' and nextToken.token == '=' then
+				if nextToken and nextToken.type == 'keyword' and nextToken.token == 'else' then
 					self:consume()
+					table.insert(stat, self:check(self:parse_block(), 'Expected block'))
+				end
+				self:expect('keyword', 'end')
+			elseif tokentoken == 'for' then
+				local name = self:expect('name')
+				local nextToken = self:peek()
+				if nextToken.type == 'syntax' and nextToken.token == '=' then
+					self:expect('syntax', '=')
+					stat = {'stat', 'for', {'Name', name}, self:check(self:parse_exp(), 'Expected exp')}
+					self:expect('syntax', ',')
+					table.insert(stat, self:check(self:parse_exp()))
+					nextToken = self:peek()
+					if nextToken.type == 'syntax' and nextToken.token == ',' then
+						self:consume()
+						table.insert(stat, self:check(self:parse_exp(), 'Expected exp'))
+					end
+				else
+					stat = {'stat', 'for', self:check(self:parse_namelist(name), 'Expected namelist')}
+					self:expect('keyword', 'in')
 					table.insert(stat, self:check(self:parse_explist(), 'Expected explist'))
 				end
+				self:expect('keyword', 'do')
+				table.insert(stat, self:check(self:parse_block(), 'Expected block'))
+				self:expect('keyword', 'end')
+			elseif tokentoken == 'while' then
+				stat = {'stat', 'while', self:check(self:parse_exp(), 'Expected exp')}
+				self:expect('keyword', 'do')
+				table.insert(stat, self:check(self:parse_block(), 'Expected block'))
+				self:expect('keyword', 'end')
+			elseif tokentoken == 'function' then
+				local funcname = {'funcname', {'Name', self:expect('name')}}
+				local nextToken = self:peek()
+				while nextToken and nextToken.type == 'syntax' and nextToken.token == '.' do
+					self:consume()
+					table.insert(funcname, {'Name', self:expect('name')})
+					nextToken = self:peek()
+				end
+				if nextToken and nextToken.type == 'syntax' and nextToken.token == ':' then
+					self:consume()
+					table.insert(funcname, ':')
+					table.insert(funcname, {'Name', self:expect('name')})
+				end
+				stat = {'stat', 'function', funcname, self:check(self:parse_funcbody(), 'Expected funcbody')}
+			elseif tokentoken == 'break' then
+				return {'stat', 'break'}
+			elseif tokentoken == 'goto' then
+				return {'stat', 'goto', {'Name', self:expect('name')}}
+			elseif tokentoken == 'do' then
+				return {'stat', 'do', self:check(self:parse_block(), 'Expected block')}
+			elseif tokentoken == 'repeat' then
+				stat = {'stat', 'repeat', self:check(self:parse_block(), 'Expected block')}
+				self:expect('keyword', 'until')
+				table.insert(stat, self:check(self:parse_exp(), 'Expected exp'))
 			end
 		end
 	end
@@ -307,7 +313,7 @@ end
 function Parser:parse_args()
 	local token = self:peek()
 	if token.type == 'string_literal' then
-		return {'args', {'LiteralString', self:consume()}}
+		return {'args', {'LiteralString', self:consume().token}}
 	elseif token.type == 'syntax' then
 		if token.token == '(' then
 			self:consume()

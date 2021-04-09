@@ -254,10 +254,19 @@ end
 function numericLiteral(input, init)
 	--TODO: Clean this up
 	local i, j, token = input:find('^(%d*%.?%d+)', init) --Check for numeric constants
+	local exponent = '^([eE][+-]?%d+)' --Pattern for decimal exponent
 	if not i then
-		i, j, token = input:find('^(0[xX]%x+(%.%x+)?([pP][+-]?%x+)?)', init) --Check for hexidecimal constants
-		if not i then
+		i, j, token = input:find('^(0[xX]%x*%.?%x+)', init) --Check for hexidecimal constants
+		if i then
+			exponent = '^([pP][+-]?%x+)' --Pattern for binary exponent
+		else
 			printParserDebug(input, init, lines, "Error: Didn't expect this here.", true)
+		end
+	end
+	if i then
+		local i2, j2, token2 = input:find(exponent, j+1) --Check for trailing exponent
+		if i2 then
+			j, token = j2, token..token2
 		end
 	end
 	return i, j, token
