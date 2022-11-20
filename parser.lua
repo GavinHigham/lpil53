@@ -45,11 +45,7 @@ local function Parser(tokens)
 		return self.tokens[index + (ahead or 0)]
 	end
 
-	function self.error(message, level)
-		error(index..': '..message, (level or 1) + 1)
-	end
-
-	function expect(expectedType, expectedToken)
+	local function expect(expectedType, expectedToken)
 		local token = consume()
 		if not token then
 			self.error("Expected '"..(expectedToken or expectedType).."' but found EOF instead", 2)
@@ -65,6 +61,10 @@ local function Parser(tokens)
 		else
 			self.error(errorMessage, 2)
 		end
+	end
+
+	function self.error(message, level)
+		error(index..': '..message, (level or 1) + 1)
 	end
 
 	function self.tokens_tostring(from, to)
