@@ -51,12 +51,12 @@ end
 
 -- verboseMode = true
 parses = {
-	Parser(lexes[1]):parse_exp(),
-	Parser(lexes[2]):parse_exp(),
-	Parser(lexes[3]):parse_exp(),
-	Parser(lexes[4]):parse_exp(),
-	Parser(lexes[5]):parse_exp(),
-	Parser(lexes[6]):parse_chunk(),
-	Parser(lexes[7]):parse_chunk(),
-	Parser(lexes[8]):parse_chunk(),
+	Parser(lexes[1]).parse_exp(),
+	Parser(lexes[2]).parse_exp(),
+	Parser(lexes[3]).parse_exp(),
+	Parser(lexes[4]).parse_exp(),
+	Parser(lexes[5]).parse_exp(),
+	Parser(lexes[6]).parse_chunk(),
+	Parser(lexes[7]).parse_chunk(),
+	Parser(lexes[8]).parse_chunk(),
 }
