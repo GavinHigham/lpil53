@@ -215,7 +215,8 @@ local function Parser(tokens)
 				elseif tokentoken == 'goto' then
 					return {'stat', 'goto', {'Name', expect('name')}}
 				elseif tokentoken == 'do' then
-					return {'stat', 'do', check(self.parse_block(), 'Expected block')}
+					stat = {'stat', 'do', check(self.parse_block(), 'Expected block')}
+					expect('keyword', 'end')
 				elseif tokentoken == 'repeat' then
 					stat = {'stat', 'repeat', check(self.parse_block(), 'Expected block')}
 					expect('keyword', 'until')
